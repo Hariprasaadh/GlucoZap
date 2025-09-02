@@ -23,11 +23,38 @@ export default function SkinScanPage() {
     
     setIsProcessing(true);
     try {
-      // TODO: Call API to analyze skin image
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Simulated delay
+      // Convert base64 to blob
+      const base64Response = await fetch(capturedImage);
+      const blob = await base64Response.blob();
+
+      // Create form data
+      const formData = new FormData();
+      formData.append('file', blob);
+
+      // Call FastAPI backend
+      const response = await fetch('https://acanthosis-glucozap.onrender.com/predict', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error('Failed to analyze image');
+
+      // Get detections from headers
+      const detectionsStr = response.headers.get('detections');
+      if (detectionsStr) {
+        const parsedDetections = JSON.parse(detectionsStr.replace(/'/g, '"'));
+        console.log('Detections:', parsedDetections);
+      }
+
+      // Get the processed image
+      const imageBlob = await response.blob();
+      const processedImageUrl = URL.createObjectURL(imageBlob);
+      setCapturedImage(processedImageUrl); // Update the displayed image with the processed one
       setStep(3);
     } catch (error) {
       console.error("Failed to analyze image:", error);
+      // Show error in UI
+      alert(error instanceof Error ? error.message : 'Failed to analyze image');
     } finally {
       setIsProcessing(false);
     }
