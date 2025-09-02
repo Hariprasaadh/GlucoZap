@@ -1,19 +1,21 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from PIL import Image
 import io
 import os
 import numpy as np
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, List
 import uvicorn
 from ultralytics import YOLO
-import base64
 import cv2
 import torch
 from datetime import datetime
 import logging
+import uuid
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +36,10 @@ MODEL_PATHS = [
     "../../ml/eye_dark_circles/yolo11s.pt",
     "yolo11s.pt"
 ]
+
+# Static directory for serving images
+STATIC_DIR = "static"
+os.makedirs(STATIC_DIR, exist_ok=True)
 
 class MockModel:
     """Mock model for testing when real model loading fails"""
@@ -62,9 +68,8 @@ class MockModel:
             def __init__(self):
                 # Simulate detection with random confidence
                 if random.random() > 0.3:  # 70% chance of detection
-                    self.cls = [torch.tensor([0])]  # class 0 for dark_circles
+                    self.cls = [torch.tensor([0])]
                     self.conf = [torch.tensor([random.uniform(0.5, 0.9)])]
-                    # Mock bounding box around eye area
                     self.xyxy = [torch.tensor([[100, 100, 200, 150]])]
                 else:
                     self.cls = []
@@ -95,35 +100,9 @@ def load_model():
     if model_path:
         try:
             logger.info(f"Loading dark circles model from: {model_path}")
-            
-            # Add PyTorch safe globals for compatibility
-            torch.serialization.add_safe_globals([
-                'ultralytics.nn.tasks.DetectionModel',
-                'ultralytics.nn.modules.head.Detect',
-                'ultralytics.nn.modules.conv.Conv',
-                'ultralytics.nn.modules.block.C2f',
-                'ultralytics.nn.modules.block.Bottleneck',
-                'ultralytics.nn.modules.block.SPPF',
-                'collections.OrderedDict'
-            ])
-            
-            # Try loading with weights_only=False
-            try:
-                original_load = torch.load
-                def safe_load(*args, **kwargs):
-                    kwargs['weights_only'] = False
-                    return original_load(*args, **kwargs)
-                
-                torch.load = safe_load
-                model = YOLO(model_path)
-                torch.load = original_load
-                logger.info("✓ Custom dark circles model loaded successfully!")
-                return
-                
-            except Exception as e1:
-                torch.load = original_load
-                logger.warning(f"Custom dark circles model loading failed: {e1}")
-                
+            model = YOLO(model_path)
+            logger.info("✓ Custom dark circles model loaded successfully!")
+            return
         except Exception as e:
             logger.error(f"Error with custom dark circles model: {e}")
     
@@ -137,13 +116,12 @@ def load_model():
                 logger.info(f"Attempting to load {model_name}...")
                 model = YOLO(model_name)
                 logger.info(f"✓ Pretrained model {model_name} loaded successfully!")
-                logger.warning("⚠️  Note: Using general detection, not specifically trained for dark circles")
+                logger.warning("⚠️ Note: Using general detection, not specifically trained for dark circles")
                 return
             except Exception as e:
                 logger.warning(f"Failed to load {model_name}: {e}")
                 continue
         
-        # If all models fail, create a mock model for API testing
         logger.warning("All model loading attempts failed. Creating mock model for testing...")
         model = MockModel()
         logger.info("✓ Mock model created for testing purposes")
@@ -156,12 +134,13 @@ def load_model():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown events"""
-    # Startup
     logger.info("Starting Dark Circles Detection API...")
     load_model()
     yield
-    # Shutdown
     logger.info("Shutting down Dark Circles Detection API...")
+    if os.path.exists(STATIC_DIR):
+        shutil.rmtree(STATIC_DIR)
+        logger.info("Cleaned up static directory")
 
 app = FastAPI(
     title="Dark Circles Detection API",
@@ -169,6 +148,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Mount static directory
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # CORS middleware
 app.add_middleware(
@@ -182,19 +164,13 @@ app.add_middleware(
 def validate_image(image: Image.Image) -> bool:
     """Validate uploaded image"""
     try:
-        # Check image format
         if image.format not in ['JPEG', 'PNG', 'JPG', 'WEBP']:
             return False
-        
-        # Check image size (max 20MB)
         if len(image.tobytes()) > 20 * 1024 * 1024:
             return False
-        
-        # Check dimensions (reasonable limits)
         width, height = image.size
         if width > 4000 or height > 4000 or width < 50 or height < 50:
             return False
-        
         return True
     except Exception as e:
         logger.error(f"Image validation error: {e}")
@@ -203,71 +179,52 @@ def validate_image(image: Image.Image) -> bool:
 def preprocess_image(image: Image.Image) -> np.ndarray:
     """Preprocess image for model inference"""
     try:
-        # Convert to RGB if needed
         if image.mode != 'RGB':
+            logger.info(f"Converting image from mode {image.mode} to RGB")
             image = image.convert('RGB')
-        
-        # Convert PIL to numpy array
         image_array = np.array(image)
-        
         return image_array
     except Exception as e:
         logger.error(f"Image preprocessing error: {e}")
         return None
 
-def image_to_base64(image_array):
-    """Convert numpy array to base64 string"""
+def save_image(image: Image.Image, filename: str) -> str:
+    """Save image to static directory and return its URL"""
     try:
-        # Ensure the image is in the correct format
-        if image_array.dtype != np.uint8:
-            image_array = (image_array * 255).astype(np.uint8)
+        # Convert RGBA to RGB if necessary
+        if image.mode == 'RGBA':
+            logger.info(f"Converting RGBA image to RGB for JPEG saving")
+            image = image.convert('RGB')
         
-        # Convert to PIL Image
-        pil_image = Image.fromarray(image_array)
-        
-        # Convert to base64
-        buffer = io.BytesIO()
-        pil_image.save(buffer, format='PNG')
-        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        
-        return f"data:image/png;base64,{image_base64}"
+        filepath = os.path.join(STATIC_DIR, filename)
+        image.save(filepath, format="JPEG", quality=95)  # Use quality=95 for better JPEG output
+        logger.info(f"Saved image to {filepath}")
+        return f"/static/{filename}"
     except Exception as e:
-        logger.error(f"Error converting image to base64: {e}")
-        return None
+        logger.error(f"Error saving image {filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save image: {str(e)}")
 
-def predict_dark_circles(image: Image.Image) -> Dict[str, Any]:
-    """
-    Predict dark circles from an image
-    
-    Args:
-        image: PIL Image object
-    
-    Returns:
-        dict: Prediction results with detection info
-    """
+def predict_dark_circles(image: Image.Image, filename: str) -> Dict[str, Any]:
+    """Predict dark circles from an image"""
     try:
-        # Make prediction
         results = model.predict(image, conf=CONFIDENCE_THRESHOLD, imgsz=IMAGE_SIZE)
         
         detections = []
         annotated_image = np.array(image)
         
-        # Process results
         for result in results:
             if hasattr(result, 'boxes') and len(result.boxes) > 0:
-                # Get annotated image with bounding boxes
                 annotated_image = result.plot()
-                # Convert BGR to RGB if needed
                 if len(annotated_image.shape) == 3:
+                    # Ensure annotated image is in RGB
                     annotated_image = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+                else:
+                    logger.warning("Annotated image has unexpected shape, using original image")
                 
-                # Extract detection information
                 for i, box in enumerate(result.boxes):
                     cls = int(box.cls[0])
                     conf = float(box.conf[0])
-                    coords = box.xyxy[0].tolist()  # [x1, y1, x2, y2]
-                    
-                    # Get class name
+                    coords = box.xyxy[0].tolist()
                     class_name = model.names.get(cls, f"class_{cls}")
                     
                     detections.append({
@@ -284,19 +241,31 @@ def predict_dark_circles(image: Image.Image) -> Dict[str, Any]:
                         }
                     })
         
+        # Convert annotated image to PIL and ensure RGB
+        annotated_pil = Image.fromarray(annotated_image)
+        if annotated_pil.mode == 'RGBA':
+            logger.info("Converting annotated image from RGBA to RGB")
+            annotated_pil = annotated_pil.convert('RGB')
+        
+        annotated_url = save_image(annotated_pil, f"annotated_{filename}")
+        
         return {
             "detection_count": len(detections),
             "detections": detections,
-            "annotated_image": annotated_image,
+            "annotated_image_url": annotated_url,
             "has_dark_circles": len(detections) > 0
         }
         
     except Exception as e:
         logger.error(f"Error during prediction: {e}")
+        # Save original image as fallback for annotated image
+        if image.mode == 'RGBA':
+            image = image.convert('RGB')
+        annotated_url = save_image(image, f"annotated_{filename}")
         return {
             "detection_count": 0,
             "detections": [],
-            "annotated_image": np.array(image),
+            "annotated_image_url": annotated_url,
             "has_dark_circles": False,
             "error": str(e)
         }
@@ -304,7 +273,6 @@ def predict_dark_circles(image: Image.Image) -> Dict[str, Any]:
 def generate_health_recommendations(has_dark_circles: bool, detection_count: int) -> List[str]:
     """Generate health recommendations based on detection results"""
     recommendations = []
-    
     if has_dark_circles:
         recommendations.extend([
             "🛌 Ensure you get 7-9 hours of quality sleep each night",
@@ -315,7 +283,6 @@ def generate_health_recommendations(has_dark_circles: bool, detection_count: int
             "🧘 Practice stress management techniques like meditation or yoga",
             "❄️ Apply cold compresses to reduce puffiness and improve circulation"
         ])
-        
         if detection_count > 1:
             recommendations.append("👨‍⚕️ Consider consulting a dermatologist for persistent dark circles")
     else:
@@ -325,7 +292,6 @@ def generate_health_recommendations(has_dark_circles: bool, detection_count: int
             "💧 Keep staying hydrated",
             "😎 Continue protecting your eye area from sun damage"
         ])
-    
     return recommendations
 
 @app.get("/")
@@ -336,9 +302,9 @@ async def root():
         "description": "Upload an image to detect dark circles around the eyes",
         "endpoints": {
             "/detect": "POST - Upload image for dark circles detection",
-            "/detect-batch": "POST - Upload multiple images for batch detection",
             "/health": "GET - API health check",
-            "/model-info": "GET - Information about the loaded model"
+            "/model-info": "GET - Information about the loaded model",
+            "/analyze-severity": "POST - Analyze dark circles severity"
         },
         "version": "1.0.0",
         "timestamp": datetime.now().isoformat()
@@ -363,50 +329,42 @@ async def model_info():
         "classes": getattr(model, 'names', {}),
         "confidence_threshold": CONFIDENCE_THRESHOLD,
         "image_size": IMAGE_SIZE,
-        "available_endpoints": ["/detect", "/detect-batch", "/health", "/model-info"]
+        "available_endpoints": ["/detect", "/health", "/model-info", "/analyze-severity"]
     }
 
 @app.post("/detect")
 async def detect_dark_circles(file: UploadFile = File(...)):
-    """
-    Detect dark circles in uploaded image
-    
-    Returns:
-    - Detection results with bounding boxes
-    - Confidence scores
-    - Annotated image
-    - Health recommendations
-    """
+    """Detect dark circles in uploaded image"""
     try:
-        # Validate file type
         if not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="File must be an image")
         
-        # Read and validate image
         image_data = await file.read()
         try:
             image = Image.open(io.BytesIO(image_data))
+            logger.info(f"Uploaded image mode: {image.mode}")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
         
         if not validate_image(image):
             raise HTTPException(status_code=400, detail="Image validation failed")
         
-        # Make prediction
+        # Generate unique filename
+        filename = f"{uuid.uuid4()}_{file.filename.replace('.png', '.jpg')}"
+        # Convert to RGB before saving if necessary
+        if image.mode == 'RGBA':
+            logger.info("Converting uploaded image from RGBA to RGB")
+            image = image.convert('RGB')
+        original_url = save_image(image, f"original_{filename}")
+        
         logger.info(f"Processing image: {file.filename}")
-        prediction_result = predict_dark_circles(image)
+        prediction_result = predict_dark_circles(image, filename)
         
-        # Convert images to base64
-        original_image_base64 = image_to_base64(np.array(image))
-        annotated_image_base64 = image_to_base64(prediction_result["annotated_image"])
-        
-        # Generate recommendations
         recommendations = generate_health_recommendations(
             prediction_result["has_dark_circles"],
             prediction_result["detection_count"]
         )
         
-        # Prepare response
         response = {
             "status": "success",
             "timestamp": datetime.now().isoformat(),
@@ -418,8 +376,8 @@ async def detect_dark_circles(file: UploadFile = File(...)):
                 "confidence_threshold": CONFIDENCE_THRESHOLD
             },
             "images": {
-                "original": original_image_base64,
-                "annotated": annotated_image_base64
+                "original_url": f"{original_url}",
+                "annotated_url": f"{prediction_result['annotated_image_url']}"
             },
             "health_recommendations": recommendations,
             "metadata": {
@@ -429,12 +387,11 @@ async def detect_dark_circles(file: UploadFile = File(...)):
             }
         }
         
-        # Add error info if present
         if "error" in prediction_result:
             response["error"] = prediction_result["error"]
         
         logger.info(f"Detection completed for {file.filename}: {prediction_result['detection_count']} detections")
-        return response
+        return JSONResponse(content=response)
         
     except HTTPException:
         raise
@@ -442,74 +399,32 @@ async def detect_dark_circles(file: UploadFile = File(...)):
         logger.error(f"Error during detection: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Detection failed: {str(e)}")
 
-@app.post("/detect-batch")
-async def detect_batch(files: List[UploadFile] = File(...)):
-    """
-    Detect dark circles in multiple images
-    
-    Args:
-        files: List of image files (max 10)
-    
-    Returns:
-        Batch detection results
-    """
-    if len(files) > 10:
-        raise HTTPException(status_code=400, detail="Maximum 10 images per batch")
-    
-    results = []
-    
-    for i, file in enumerate(files):
-        try:
-            # Process each image
-            result = await detect_dark_circles(file)
-            result["batch_index"] = i
-            results.append(result)
-            
-        except Exception as e:
-            # Add error result for failed images
-            results.append({
-                "batch_index": i,
-                "filename": file.filename,
-                "status": "error",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            })
-    
-    # Calculate batch statistics
-    successful = [r for r in results if r.get("status") == "success"]
-    failed = [r for r in results if r.get("status") == "error"]
-    
-    total_detections = sum(r.get("results", {}).get("detection_count", 0) for r in successful)
-    images_with_dark_circles = sum(1 for r in successful if r.get("results", {}).get("has_dark_circles", False))
-    
-    return {
-        "status": "completed",
-        "timestamp": datetime.now().isoformat(),
-        "batch_summary": {
-            "total_images": len(files),
-            "successful": len(successful),
-            "failed": len(failed),
-            "total_detections": total_detections,
-            "images_with_dark_circles": images_with_dark_circles,
-            "detection_rate": f"{(images_with_dark_circles/len(successful)*100):.1f}%" if successful else "0%"
-        },
-        "results": results
-    }
-
 @app.post("/analyze-severity")
 async def analyze_severity(file: UploadFile = File(...)):
-    """
-    Advanced analysis with severity assessment
-    """
+    """Advanced analysis with severity assessment"""
     try:
-        # Get basic detection results
-        detection_result = await detect_dark_circles(file)
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
         
-        if detection_result["status"] != "success":
-            return detection_result
+        image_data = await file.read()
+        try:
+            image = Image.open(io.BytesIO(image_data))
+            logger.info(f"Uploaded image mode: {image.mode}")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
         
-        # Analyze severity based on detection parameters
-        detections = detection_result["results"]["detections"]
+        if not validate_image(image):
+            raise HTTPException(status_code=400, detail="Image validation failed")
+        
+        filename = f"{uuid.uuid4()}_{file.filename.replace('.png', '.jpg')}"
+        if image.mode == 'RGBA':
+            logger.info("Converting uploaded image from RGBA to RGB")
+            image = image.convert('RGB')
+        original_url = save_image(image, f"original_{filename}")
+        
+        prediction_result = predict_dark_circles(image, filename)
+        
+        detections = prediction_result["detections"]
         severity_analysis = {
             "severity_level": "none",
             "severity_score": 0,
@@ -517,16 +432,12 @@ async def analyze_severity(file: UploadFile = File(...)):
         }
         
         if detections:
-            # Calculate average confidence
             avg_confidence = sum(d["confidence"] for d in detections) / len(detections)
-            
-            # Calculate total area affected
             total_area = sum(
                 d["bounding_box"]["width"] * d["bounding_box"]["height"] 
                 for d in detections
             )
             
-            # Determine severity
             if avg_confidence >= 0.8 and total_area > 1000:
                 severity_analysis["severity_level"] = "severe"
                 severity_analysis["severity_score"] = 90
@@ -543,14 +454,62 @@ async def analyze_severity(file: UploadFile = File(...)):
                 "detection_count": len(detections)
             }
         
-        # Add severity analysis to response
-        detection_result["severity_analysis"] = severity_analysis
+        recommendations = generate_health_recommendations(
+            prediction_result["has_dark_circles"],
+            prediction_result["detection_count"]
+        )
         
-        return detection_result
+        response = {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "filename": file.filename,
+            "results": {
+                "detection_count": prediction_result["detection_count"],
+                "has_dark_circles": prediction_result["has_dark_circles"],
+                "detections": prediction_result["detections"],
+                "confidence_threshold": CONFIDENCE_THRESHOLD
+            },
+            "images": {
+                "original_url": f"{original_url}",
+                "annotated_url": f"{prediction_result['annotated_image_url']}"
+            },
+            "health_recommendations": recommendations,
+            "severity_analysis": severity_analysis,
+            "metadata": {
+                "image_size": f"{image.size[0]}x{image.size[1]}",
+                "model_type": type(model).__name__,
+                "processing_time": "Real-time"
+            }
+        }
         
+        if "error" in prediction_result:
+            response["error"] = prediction_result["error"]
+        
+        logger.info(f"Severity analysis completed for {file.filename}: {prediction_result['detection_count']} detections")
+        return JSONResponse(content=response)
+        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error during severity analysis: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Severity analysis failed: {str(e)}")
+
+@app.get("/image/{image_type}/{filename}")
+async def get_image(image_type: str, filename: str):
+    """Stream the original or annotated image"""
+    if image_type not in ["original", "annotated"]:
+        raise HTTPException(status_code=400, detail="Invalid image type")
+    filepath = os.path.join(STATIC_DIR, f"{image_type}_{filename}")
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    img = Image.open(filepath)
+    if img.mode == 'RGBA':
+        img = img.convert('RGB')
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=95)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/jpeg")
 
 if __name__ == "__main__":
     uvicorn.run(

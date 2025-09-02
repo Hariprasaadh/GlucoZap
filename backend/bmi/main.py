@@ -439,55 +439,6 @@ async def predict_bmi(file: UploadFile = File(...)):
         logger.error(f"Unexpected error in BMI prediction: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.post("/predict-batch")
-async def predict_bmi_batch(files: List[UploadFile] = File(...)):
-    """
-    Predict BMI categories for multiple images
-    
-    Args:
-        files: List of image files
-    
-    Returns:
-        JSON response with predictions for each image
-    """
-    if len(files) > 10:  # Limit batch size
-        raise HTTPException(status_code=400, detail="Maximum 10 images per batch")
-    
-    results = []
-    
-    for i, file in enumerate(files):
-        try:
-            # Process each image
-            image_bytes = await file.read()
-            image = Image.open(io.BytesIO(image_bytes))
-            
-            if not validate_image(image):
-                results.append({
-                    "filename": file.filename,
-                    "error": "Image validation failed"
-                })
-                continue
-            
-            image_np = preprocess_image(image)
-            predictions = model.predict(image_np, verbose=False)
-            result_data = postprocess_results(predictions, image_np.shape)
-            
-            results.append({
-                "filename": file.filename,
-                "result": result_data
-            })
-            
-        except Exception as e:
-            results.append({
-                "filename": file.filename,
-                "error": str(e)
-            })
-    
-    return JSONResponse(content={
-        "batch_results": results,
-        "total_processed": len(results),
-        "timestamp": datetime.now().isoformat()
-    })
 
 if __name__ == "__main__":
     print("Starting BMI Classification API server...")
@@ -498,7 +449,7 @@ if __name__ == "__main__":
     
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="localhost",
         port=8000,
         reload=True,
         log_level="info"
