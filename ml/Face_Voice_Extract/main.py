@@ -32,34 +32,68 @@ class DiabetesRiskAnalyzer:
         
         self.cap = None
         self.recording = False
+        self.breath_holding = False
         self.current_task = 0
         self.fs = 44100
         self.seconds = 15
         self.audio_data = None
         self.facial_metrics = []
         self.voice_features = {}
-        self.risk_factors = {}
+        self.task_results = {}
+        self.breath_start_time = None
         
         self.tasks = [
             {
-                "name": "Baseline Reading",
-                "text": "Please read this text at a comfortable pace: The quick brown fox jumps over the lazy dog. This pangram contains every letter of the alphabet and helps us analyze your speech patterns.",
-                "duration": 10,
-                "instruction": "Sit comfortably and read the text naturally"
-            },
-            {
-                "name": "Stress Reading",
+                "name": "Stress Reading Task",
                 "text": "Reading under time pressure: Calculate seventeen multiplied by twenty-three, then add forty-nine and subtract twelve. Remember these numbers while reading: 391, 847, 523, 196, 785.",
                 "duration": 12,
-                "instruction": "Read quickly while remembering the numbers"
+                "instruction": "Read quickly while remembering the numbers",
+                "type": "voice"
             },
             {
-                "name": "Sustained Phonation",
+                "name": "Sustained Phonation Task",
                 "text": "Say 'Ahhhhhh' for as long as possible in one breath. Then repeat 'Pa-ta-ka-pa-ta-ka' rapidly for 10 seconds.",
                 "duration": 15,
-                "instruction": "Hold your face steady during phonation"
+                "instruction": "Hold your face steady during phonation",
+                "type": "voice"
+            },
+            {
+                "name": "Breath Holding Task",
+                "text": "Take a deep breath and hold it for as long as comfortable. Click 'Finished Breath Hold' when you release your breath.",
+                "duration": 60,
+                "instruction": "Keep your face visible and steady while holding breath",
+                "type": "breath"
             }
         ]
+        
+        self.diabetic_baseline = {
+            "stress_reading": {
+                "pitch_mean": 145.0,
+                "jitter": 0.025,
+                "shimmer": 0.18,
+                "hnr": 8.5,
+                "spectral_centroid": 1200.0,
+                "avg_ear": 0.18,
+                "face_ratio": 1.45,
+                "mouth_ratio": 0.25
+            },
+            "phonation": {
+                "pitch_mean": 140.0,
+                "jitter": 0.030,
+                "shimmer": 0.22,
+                "hnr": 7.8,
+                "spectral_centroid": 950.0,
+                "avg_ear": 0.17,
+                "face_ratio": 1.48,
+                "mouth_ratio": 0.28
+            },
+            "breath_hold": {
+                "duration": 25.0,
+                "avg_ear": 0.16,
+                "face_ratio": 1.50,
+                "ear_variability": 0.08
+            }
+        }
         
         self.setup_ui()
         
@@ -91,14 +125,17 @@ class DiabetesRiskAnalyzer:
         self.start_button = ttk.Button(control_frame, text="Start Analysis", command=self.start_analysis)
         self.start_button.grid(row=0, column=0, padx=10)
         
+        self.breath_done_button = ttk.Button(control_frame, text="Finished Breath Hold", command=self.finish_breath_hold, state="disabled")
+        self.breath_done_button.grid(row=0, column=1, padx=10)
+        
         self.next_task_button = ttk.Button(control_frame, text="Next Task", command=self.next_task, state="disabled")
-        self.next_task_button.grid(row=0, column=1, padx=10)
+        self.next_task_button.grid(row=0, column=2, padx=10)
         
         self.stop_button = ttk.Button(control_frame, text="Stop Analysis", command=self.stop_analysis, state="disabled")
-        self.stop_button.grid(row=0, column=2, padx=10)
+        self.stop_button.grid(row=0, column=3, padx=10)
         
         self.calculate_risk_button = ttk.Button(control_frame, text="Calculate Risk", command=self.calculate_diabetes_risk, state="disabled")
-        self.calculate_risk_button.grid(row=0, column=3, padx=10)
+        self.calculate_risk_button.grid(row=0, column=4, padx=10)
         
         progress_frame = ttk.Frame(main_frame)
         progress_frame.grid(row=4, column=0, columnspan=2, pady=10)
@@ -138,15 +175,22 @@ class DiabetesRiskAnalyzer:
             
             self.start_time = time.time()
             
-            self.audio_thread = threading.Thread(target=self.record_audio)
-            self.audio_thread.start()
-            
-            self.video_thread = threading.Thread(target=self.process_video)
-            self.video_thread.start()
-            
-            self.progress_thread = threading.Thread(target=self.update_progress)
-            self.progress_thread.start()
-            
+            if task["type"] == "voice":
+                self.audio_thread = threading.Thread(target=self.record_audio)
+                self.audio_thread.start()
+                
+                self.video_thread = threading.Thread(target=self.process_video)
+                self.video_thread.start()
+                
+                self.progress_thread = threading.Thread(target=self.update_progress)
+                self.progress_thread.start()
+            elif task["type"] == "breath":
+                self.breath_holding = True
+                self.breath_start_time = time.time()
+                self.breath_done_button.config(state="normal")
+                self.video_thread = threading.Thread(target=self.process_video_breath)
+                self.video_thread.start()
+                
         except Exception as e:
             self.status_label.config(text=f"Error starting analysis: {str(e)}")
             
@@ -171,6 +215,15 @@ class DiabetesRiskAnalyzer:
                 
             time.sleep(0.1)
             
+    def finish_breath_hold(self):
+        if self.breath_holding:
+            self.breath_holding = False
+            breath_duration = time.time() - self.breath_start_time
+            self.task_results[f'task_{self.current_task + 1}'] = {'breath_duration': breath_duration}
+            self.breath_done_button.config(state="disabled")
+            self.recording = False
+            self.root.after(0, self.task_completed)
+            
     def task_completed(self):
         self.start_button.config(state="normal")
         self.stop_button.config(state="disabled")
@@ -194,8 +247,10 @@ class DiabetesRiskAnalyzer:
         
     def stop_analysis(self):
         self.recording = False
+        self.breath_holding = False
         self.start_button.config(state="normal")
         self.stop_button.config(state="disabled")
+        self.breath_done_button.config(state="disabled")
         self.next_task_button.config(state="normal" if self.current_task < len(self.tasks) - 1 else "disabled")
         self.status_label.config(text="Analysis stopped")
         
@@ -370,119 +425,223 @@ class DiabetesRiskAnalyzer:
                 f'task_{self.current_task + 1}': task_facial_metrics
             })
             
+    def process_video_breath(self):
+        face_detected = False
+        frame_count = 0
+        task_facial_metrics = []
+        
+        while self.breath_holding:
+            try:
+                ret, frame = self.cap.read()
+                if not ret:
+                    break
+                    
+                frame = cv2.flip(frame, 1)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = self.face_mesh.process(rgb_frame)
+                
+                if results.multi_face_landmarks:
+                    face_detected = True
+                    for face_landmarks in results.multi_face_landmarks:
+                        self.mp_draw.draw_landmarks(
+                            frame, 
+                            face_landmarks, 
+                            self.mp_face_mesh.FACEMESH_TESSELATION,
+                            None,
+                            self.mp_drawing_styles.get_default_face_mesh_tesselation_style()
+                        )
+                        
+                        self.mp_draw.draw_landmarks(
+                            frame, 
+                            face_landmarks, 
+                            self.mp_face_mesh.FACEMESH_CONTOURS,
+                            None,
+                            self.mp_drawing_styles.get_default_face_mesh_contours_style()
+                        )
+                        
+                        if frame_count % 5 == 0:
+                            metrics = self.extract_facial_metrics(face_landmarks)
+                            if metrics:
+                                task_facial_metrics.append(metrics)
+                
+                status_text = "Face Detected - Holding Breath" if face_detected else "No Face Detected"
+                cv2.putText(frame, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if face_detected else (0, 0, 255), 2)
+                
+                if self.breath_start_time:
+                    elapsed = time.time() - self.breath_start_time
+                    cv2.putText(frame, f"Breath Hold: {int(elapsed)}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                
+                cv2.putText(frame, "Click 'Finished Breath Hold' when done", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                
+                cv2.imshow("Diabetes Risk Analysis - Face Mesh", frame)
+                
+                if cv2.waitKey(1) & 0xFF == 27:
+                    self.breath_holding = False
+                    break
+                    
+                frame_count += 1
+                    
+            except Exception as e:
+                print(f"Video processing error: {str(e)}")
+                break
+                
+        if task_facial_metrics:
+            self.facial_metrics.append({
+                f'task_{self.current_task + 1}': task_facial_metrics
+            })
+            
     def calculate_diabetes_risk(self):
         try:
-            risk_score = 0
-            risk_details = []
-            
-            if self.voice_features:
-                voice_risk = 0
-                
-                for task, features in self.voice_features.items():
-                    if features['pitch_mean'] < 120 or features['pitch_mean'] > 300:
-                        voice_risk += 1
-                        risk_details.append(f"Abnormal pitch range in {task}")
-                    
-                    if features['jitter'] > 0.02:
-                        voice_risk += 2
-                        risk_details.append(f"High jitter (voice instability) in {task}")
-                    
-                    if features['shimmer'] > 0.15:
-                        voice_risk += 2
-                        risk_details.append(f"High shimmer (amplitude variation) in {task}")
-                    
-                    if features['hnr'] < 10:
-                        voice_risk += 1
-                        risk_details.append(f"Low harmonics-to-noise ratio in {task}")
-                
-                risk_score += voice_risk
-            
-            if self.facial_metrics:
-                facial_risk = 0
-                
-                for task_data in self.facial_metrics:
-                    for task, metrics_list in task_data.items():
-                        if metrics_list:
-                            avg_metrics = {
-                                key: np.mean([m.get(key, 0) for m in metrics_list]) 
-                                for key in metrics_list[0].keys()
-                            }
-                            
-                            if avg_metrics['avg_ear'] < 0.2:
-                                facial_risk += 1
-                                risk_details.append(f"Reduced eye opening in {task}")
-                            
-                            if avg_metrics['face_ratio'] > 1.4:
-                                facial_risk += 1
-                                risk_details.append(f"Altered facial proportions in {task}")
-                            
-                            if avg_metrics['mouth_ratio'] < 0.3:
-                                facial_risk += 1
-                                risk_details.append(f"Reduced mouth mobility in {task}")
-                
-                risk_score += facial_risk
-            
-            risk_level = "LOW"
-            if risk_score >= 8:
-                risk_level = "HIGH"
-            elif risk_score >= 5:
-                risk_level = "MODERATE"
-            
             results = f"""DIABETES RISK ASSESSMENT REPORT
-{'='*50}
-Overall Risk Score: {risk_score}/12
-Risk Level: {risk_level}
+{'='*60}
 
-VOICE BIOMARKER ANALYSIS:
-{'-'*30}
-Tasks Completed: {len(self.voice_features)}
+TASK-BY-TASK ANALYSIS:
+{'='*30}
 """
             
-            for task, features in self.voice_features.items():
-                results += f"\n{task.upper()}:\n"
-                results += f"  Pitch Mean: {features['pitch_mean']:.2f} Hz\n"
-                results += f"  Jitter: {features['jitter']:.4f}\n"
-                results += f"  Shimmer: {features['shimmer']:.4f}\n"
-                results += f"  HNR: {features['hnr']:.2f} dB\n"
-                results += f"  Spectral Centroid: {features['spectral_centroid']:.2f}\n"
+            task_names = ["stress_reading", "phonation", "breath_hold"]
             
-            results += f"\nFACIAL BIOMARKER ANALYSIS:\n{'-'*30}\n"
+            for i, (task_name, baseline) in enumerate(self.diabetic_baseline.items()):
+                task_num = i + 1
+                results += f"\nTASK {task_num}: {task_name.upper().replace('_', ' ')}\n"
+                results += f"{'-'*40}\n"
+                
+                if task_name == "breath_hold":
+                    if f'task_{task_num}' in self.task_results:
+                        breath_duration = self.task_results[f'task_{task_num}']['breath_duration']
+                        results += f"Breath Hold Duration: {breath_duration:.1f}s (Baseline: {baseline['duration']:.1f}s)\n"
+                        
+                        for task_data in self.facial_metrics:
+                            if f'task_{task_num}' in task_data:
+                                metrics_list = task_data[f'task_{task_num}']
+                                if metrics_list:
+                                    avg_metrics = {
+                                        key: np.mean([m.get(key, 0) for m in metrics_list]) 
+                                        for key in metrics_list[0].keys()
+                                    }
+                                    ear_values = [m.get('avg_ear', 0) for m in metrics_list]
+                                    ear_variability = np.std(ear_values)
+                                    
+                                    results += f"Eye Aspect Ratio: {avg_metrics['avg_ear']:.3f} (Baseline: {baseline['avg_ear']:.3f})\n"
+                                    results += f"Face Ratio: {avg_metrics['face_ratio']:.3f} (Baseline: {baseline['face_ratio']:.3f})\n"
+                                    results += f"Eye Variability: {ear_variability:.3f} (Baseline: {baseline['ear_variability']:.3f})\n"
+                else:
+                    if f'task_{task_num}' in self.voice_features:
+                        features = self.voice_features[f'task_{task_num}']
+                        results += f"Pitch Mean: {features['pitch_mean']:.2f} Hz (Baseline: {baseline['pitch_mean']:.2f} Hz)\n"
+                        results += f"Jitter: {features['jitter']:.4f} (Baseline: {baseline['jitter']:.4f})\n"
+                        results += f"Shimmer: {features['shimmer']:.4f} (Baseline: {baseline['shimmer']:.4f})\n"
+                        results += f"HNR: {features['hnr']:.2f} dB (Baseline: {baseline['hnr']:.2f} dB)\n"
+                        results += f"Spectral Centroid: {features['spectral_centroid']:.2f} (Baseline: {baseline['spectral_centroid']:.2f})\n"
+                    
+                    for task_data in self.facial_metrics:
+                        if f'task_{task_num}' in task_data:
+                            metrics_list = task_data[f'task_{task_num}']
+                            if metrics_list:
+                                avg_metrics = {
+                                    key: np.mean([m.get(key, 0) for m in metrics_list]) 
+                                    for key in metrics_list[0].keys()
+                                }
+                                results += f"Eye Aspect Ratio: {avg_metrics['avg_ear']:.3f} (Baseline: {baseline['avg_ear']:.3f})\n"
+                                results += f"Face Ratio: {avg_metrics['face_ratio']:.3f} (Baseline: {baseline['face_ratio']:.3f})\n"
+                                results += f"Mouth Ratio: {avg_metrics['mouth_ratio']:.3f} (Baseline: {baseline['mouth_ratio']:.3f})\n"
             
-            if self.facial_metrics:
+            overall_risk = 0
+            risk_indicators = []
+            
+            for i, (task_name, baseline) in enumerate(self.diabetic_baseline.items()):
+                task_num = i + 1
+                task_risk = 0
+                
+                if task_name == "breath_hold":
+                    if f'task_{task_num}' in self.task_results:
+                        breath_duration = self.task_results[f'task_{task_num}']['breath_duration']
+                        if breath_duration <= baseline['duration']:
+                            task_risk += 2
+                            risk_indicators.append(f"Short breath hold duration in Task {task_num}")
+                else:
+                    if f'task_{task_num}' in self.voice_features:
+                        features = self.voice_features[f'task_{task_num}']
+                        
+                        if abs(features['pitch_mean'] - baseline['pitch_mean']) > 20:
+                            task_risk += 1
+                            risk_indicators.append(f"Abnormal pitch in Task {task_num}")
+                        
+                        if features['jitter'] >= baseline['jitter']:
+                            task_risk += 2
+                            risk_indicators.append(f"High jitter in Task {task_num}")
+                        
+                        if features['shimmer'] >= baseline['shimmer']:
+                            task_risk += 2
+                            risk_indicators.append(f"High shimmer in Task {task_num}")
+                        
+                        if features['hnr'] <= baseline['hnr']:
+                            task_risk += 1
+                            risk_indicators.append(f"Low voice quality in Task {task_num}")
+                
                 for task_data in self.facial_metrics:
-                    for task, metrics_list in task_data.items():
+                    if f'task_{task_num}' in task_data:
+                        metrics_list = task_data[f'task_{task_num}']
                         if metrics_list:
                             avg_metrics = {
                                 key: np.mean([m.get(key, 0) for m in metrics_list]) 
                                 for key in metrics_list[0].keys()
                             }
-                            results += f"\n{task.upper()}:\n"
-                            results += f"  Average Eye Aspect Ratio: {avg_metrics['avg_ear']:.3f}\n"
-                            results += f"  Face Ratio: {avg_metrics['face_ratio']:.3f}\n"
-                            results += f"  Mouth Mobility: {avg_metrics['mouth_ratio']:.3f}\n"
+                            
+                            if avg_metrics['avg_ear'] <= baseline['avg_ear']:
+                                task_risk += 1
+                                risk_indicators.append(f"Reduced eye opening in Task {task_num}")
+                            
+                            if avg_metrics['face_ratio'] >= baseline['face_ratio']:
+                                task_risk += 1
+                                risk_indicators.append(f"Altered facial proportions in Task {task_num}")
+                
+                overall_risk += task_risk
             
-            results += f"\nRISK INDICATORS:\n{'-'*20}\n"
-            for detail in risk_details:
-                results += f"• {detail}\n"
+            risk_level = "LOW"
+            if overall_risk >= 12:
+                risk_level = "HIGH"
+            elif overall_risk >= 8:
+                risk_level = "MODERATE"
             
-            if not risk_details:
+            results += f"\nOVERALL RISK ASSESSMENT:\n"
+            results += f"{'='*40}\n"
+            results += f"Total Risk Score: {overall_risk}/18\n"
+            results += f"Risk Level: {risk_level}\n\n"
+            
+            results += f"RISK INDICATORS:\n"
+            results += f"{'-'*20}\n"
+            if risk_indicators:
+                for indicator in risk_indicators:
+                    results += f"• {indicator}\n"
+            else:
                 results += "No significant risk indicators detected\n"
             
-            results += f"\nRECOMMENDations:\n{'-'*20}\n"
+            results += f"\nRECOMMENDATIONS:\n"
+            results += f"{'-'*20}\n"
             if risk_level == "HIGH":
-                results += "• Consult healthcare provider for diabetes screening\n"
+                results += "• Consult healthcare provider for comprehensive diabetes screening\n"
                 results += "• Monitor blood glucose levels regularly\n"
-                results += "• Consider lifestyle modifications\n"
+                results += "• Consider immediate lifestyle modifications\n"
+                results += "• Follow up with endocrinologist\n"
             elif risk_level == "MODERATE":
-                results += "• Consider routine diabetes screening\n"
-                results += "• Monitor for symptoms\n"
-                results += "• Maintain healthy lifestyle\n"
+                results += "• Schedule routine diabetes screening within 3 months\n"
+                results += "• Monitor for diabetes symptoms\n"
+                results += "• Maintain healthy lifestyle habits\n"
+                results += "• Consider dietary consultation\n"
             else:
-                results += "• Continue regular health checkups\n"
+                results += "• Continue regular health checkups annually\n"
                 results += "• Maintain current healthy habits\n"
+                results += "• Stay physically active\n"
             
-            results += f"\nReport generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            results += "Note: This is a preliminary assessment tool and not a medical diagnosis.\n"
+            results += f"\nREPORT SUMMARY:\n"
+            results += f"{'-'*20}\n"
+            results += f"Tasks Completed: {len(self.tasks)}\n"
+            results += f"Voice Analysis Tasks: 2\n"
+            results += f"Breath Hold Analysis: 1\n"
+            results += f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            results += "DISCLAIMER: This is a preliminary assessment tool and not a medical diagnosis.\n"
+            results += "Please consult with healthcare professionals for proper medical evaluation.\n"
             
             self.update_results(results)
             self.calculate_risk_button.config(state="disabled")
@@ -503,6 +662,7 @@ Tasks Completed: {len(self.voice_features)}
             
     def on_closing(self):
         self.recording = False
+        self.breath_holding = False
         if self.cap:
             self.cap.release()
         cv2.destroyAllWindows()
