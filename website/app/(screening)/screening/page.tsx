@@ -47,9 +47,9 @@ const screeningSteps = [
     accuracy: '82%'
   },
   { 
-    id: 'foot-scan', 
-    title: 'metabolic-disturbances', 
-    description: 'Detailed examination of foot health and early wound detection',
+    id: 'metabolic-disturbances', 
+    title: 'Metabolic Disturbances', 
+    description: 'Detailed examination of metabolic health and early detection of disturbances',
     duration: 3,
     icon: '🦶',
     status: 'Recommended',
