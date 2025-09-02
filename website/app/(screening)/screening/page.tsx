@@ -30,7 +30,7 @@ const screeningSteps = [
   },
   { 
     id: 'skin-scan', 
-    title: 'Skin Analysis', 
+    title: 'Acanthosis', 
     description: 'Advanced AI-powered analysis of neck and skin fold patterns',
     duration: 3,
     icon: '🔍',
@@ -38,40 +38,22 @@ const screeningSteps = [
     accuracy: '88%'
   },
   { 
-    id: 'face-scan', 
-    title: 'Facial Analysis', 
-    description: 'Deep learning assessment of facial features and textures',
+    id: 'body-scan', 
+    title: 'Body Analysis', 
+    description: 'Deep learning assessment of body features and textures',
     duration: 2,
     icon: '👤',
     status: 'Optional',
     accuracy: '82%'
   },
   { 
-    id: 'foot-scan', 
-    title: 'Foot Assessment', 
-    description: 'Detailed examination of foot health and early wound detection',
+    id: 'metabolic-disturbances', 
+    title: 'Metabolic Disturbances', 
+    description: 'Detailed examination of metabolic health and early detection of disturbances',
     duration: 3,
     icon: '🦶',
     status: 'Recommended',
     accuracy: '91%'
-  },
-  { 
-    id: 'pose-scan', 
-    title: 'Body Composition', 
-    description: 'AI-powered analysis of body shape and fat distribution patterns',
-    duration: 2,
-    icon: '🧍',
-    status: 'Optional',
-    accuracy: '85%'
-  },
-  { 
-    id: 'breathing-test', 
-    title: 'Breathing Test', 
-    description: 'Advanced respiratory pattern analysis using acoustic AI',
-    duration: 4,
-    icon: '🫁',
-    status: 'Recommended',
-    accuracy: '89%'
   },
 ]
 
