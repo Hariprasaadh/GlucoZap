@@ -1,0 +1,13 @@
+train: Acanthosis-Nigricans-Detection-1/train/images
+val: Acanthosis-Nigricans-Detection-1/valid/images
+test: Acanthosis-Nigricans-Detection-1/test/images
+
+nc: 2
+names: ['Acanthosis Nigricans', 'Healthy']
+
+roboflow:
+  workspace: sliit-gvlap
+  project: acanthosis-nigricans-detection-xempk
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/sliit-gvlap/acanthosis-nigricans-detection-xempk/dataset/1
