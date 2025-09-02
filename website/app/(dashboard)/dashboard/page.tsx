@@ -1,5 +1,6 @@
 'use client'
 
+import { useRouter } from 'next/navigation'  // Add this import at the top
 import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -7,6 +8,7 @@ import Link from 'next/link'
 import RiskChart from '@/components/dashboard/RiskChart'
 import StatsCards from '@/components/dashboard/StatsCards'
 import { Mic, MicOff, Stethoscope, AlertCircle } from 'lucide-react'
+import Vapi from '@vapi-ai/web'
 
 // Types
 interface HistoryItem {
@@ -92,127 +94,15 @@ Remember: You are not a replacement for professional medical advice. Always enco
 }
 
 export default function Dashboard() {
+  const router = useRouter()  // Add this hook
   const [data, setData] = useState<MockData>(mockData)
-  const [vapi, setVapi] = useState<any>(null)
-  const [callStatus, setCallStatus] = useState<CallStatus>('idle')
-  const [error, setError] = useState<string | null>(null)
-
-  // Initialize Vapi
-  useEffect(() => {
-    const initVapi = async () => {
-      try {
-        // Check if API key exists
-        const apiKey = process.env.NEXT_PUBLIC_VAPI_KEY
-        if (!apiKey) {
-          console.warn('Vapi API key not found. Please add NEXT_PUBLIC_VAPI_KEY to your .env.local file')
-          setError('Voice assistant not configured')
-          return
-        }
-
-        // Dynamically import Vapi to avoid SSR issues
-        const { Vapi } = await import('@vapi-ai/web')
-        const vapiInstance = new Vapi(apiKey)
-        
-        // Set up event listeners
-        vapiInstance.on('call-start', () => {
-          console.log('Call started')
-          setCallStatus('connected')
-          setError(null)
-        })
-
-        vapiInstance.on('call-end', () => {
-          console.log('Call ended')
-          setCallStatus('ended')
-        })
-
-        vapiInstance.on('speech-start', (event: any) => {
-          if (event.type === 'user') {
-            setCallStatus('user-speaking')
-          } else {
-            setCallStatus('assistant-speaking')
-          }
-        })
-
-        vapiInstance.on('speech-end', () => {
-          setCallStatus('connected')
-        })
-
-        vapiInstance.on('error', (error: any) => {
-          console.error('Vapi error:', error)
-          setError(error?.message || 'An error occurred with the voice assistant')
-          setCallStatus('error')
-        })
-
-        setVapi(vapiInstance)
-      } catch (err: unknown) {
-        console.error('Failed to initialize Vapi:', err)
-        const errorMessage = err instanceof Error ? err.message : 'Failed to initialize voice assistant'
-        setError(errorMessage)
-      }
-    }
-
-    initVapi()
-
-    // Cleanup on unmount
-    return () => {
-      if (vapi) {
-        vapi.stop()
-      }
-    }
-  }, [])
-
-  const startConversation = useCallback(async () => {
-    if (!vapi) {
-      setError('Voice assistant not initialized')
-      return
-    }
-
-    try {
-      setCallStatus('connecting')
-      setError(null)
-      
-      // Start the call with the assistant configuration
-      await vapi.start(
-        healthAssistantConfig.name,
-        healthAssistantConfig.firstMessage,
-        healthAssistantConfig.transcriber,
-        healthAssistantConfig.voice,
-        healthAssistantConfig.model
-      )
-      
-    } catch (err: unknown) {
-      console.error('Failed to start conversation:', err)
-      const errorMessage = err instanceof Error ? err.message : 'Failed to start conversation'
-      setError(errorMessage)
-      setCallStatus('error')
-    }
-  }, [vapi])
-
-  const stopConversation = useCallback(async () => {
-    if (!vapi) return
-
-    try {
-      await vapi.stop()
-      setCallStatus('idle')
-    } catch (err: unknown) {
-      console.error('Failed to stop conversation:', err)
-      const errorMessage = err instanceof Error ? err.message : 'Failed to stop conversation'
-      setError(errorMessage)
-      setCallStatus('error')
-    }
-  }, [vapi])
 
   // Get button state and styling
   const getButtonState = () => {
-    if (callStatus === 'connecting') return { icon: Mic, text: 'Connecting...', disabled: true }
-    if (callStatus === 'connected' || callStatus === 'user-speaking' || callStatus === 'assistant-speaking') 
-      return { icon: MicOff, text: 'End Call', disabled: false }
-    if (callStatus === 'error') return { icon: AlertCircle, text: 'Error', disabled: true }
-    return { icon: Stethoscope, text: 'Start Assistant', disabled: false }
+    return { icon: Stethoscope, text: 'Open AI Assistant', disabled: false }
   }
 
   const buttonState = getButtonState()
-  const isCallActive = callStatus !== 'idle' && callStatus !== 'ended' && callStatus !== 'error'
 
   return (
     <div className="container mx-auto py-8">
@@ -222,18 +112,6 @@ export default function Dashboard() {
           <Link href="/screening">New Assessment</Link>
         </Button>
       </div>
-
-      {/* Error display */}
-      {error && (
-        <Card className="mb-6 border-red-200 bg-red-50">
-          <CardContent className="pt-6">
-            <div className="flex items-center text-red-800">
-              <AlertCircle className="mr-2 h-4 w-4" />
-              <span>Voice Assistant Error: {error}</span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Stats Cards Component */}
       <StatsCards 
@@ -317,32 +195,14 @@ export default function Dashboard() {
       {/* Floating AI Assistant button */}
       <div className="fixed bottom-6 right-6 z-50">
         <button
-          onClick={isCallActive ? stopConversation : startConversation}
-          disabled={buttonState.disabled}
-          className={`p-4 rounded-full shadow-lg transition-all duration-200 flex items-center justify-center ${
-            buttonState.disabled
-              ? 'bg-gray-400 cursor-not-allowed'
-              : isCallActive
-              ? 'bg-gradient-to-r from-red-400 to-red-600 hover:from-red-500 hover:to-red-700'
-              : 'bg-gradient-to-r from-emerald-400 to-green-600 hover:from-emerald-500 hover:to-green-700'
-          } text-white`}
-          title={buttonState.text}
+          onClick={() => router.push('/ai-assistant')}
+          className="p-4 rounded-full shadow-lg transition-all duration-200 flex items-center justify-center
+            bg-gradient-to-r from-emerald-400 to-green-600 hover:from-emerald-500 hover:to-green-700
+            text-white"
+          title="Open AI Assistant"
         >
-          <buttonState.icon size={24} className={callStatus === 'connecting' ? 'animate-pulse' : ''} />
+          <Stethoscope size={24} />
         </button>
-        
-        {/* Status indicator */}
-        {callStatus !== 'idle' && (
-          <div className="absolute -top-2 -right-2 w-4 h-4 rounded-full border-2 border-white">
-            <div className={`w-full h-full rounded-full ${
-              callStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
-              callStatus === 'user-speaking' ? 'bg-blue-500 animate-pulse' :
-              callStatus === 'assistant-speaking' ? 'bg-green-500 animate-pulse' :
-              callStatus === 'connected' ? 'bg-green-500' :
-              'bg-gray-500'
-            }`} />
-          </div>
-        )}
       </div>
     </div>
   )
