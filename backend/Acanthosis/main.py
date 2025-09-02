@@ -16,7 +16,7 @@ app.add_middleware(
 )
 
 # Load YOLO model
-model = YOLO(r"C:\Users\Asus\OneDrive\Documents\GitHub\GlucoZap\ml\Acanthosis_Nigricans_Detection\runs\detect\train2\weights\best.pt")
+model = YOLO("../../ml/Acanthosis_Nigricans_Detection/runs/detect/train2/weights/best.pt")
 
 @app.get("/")
 def read_root():
