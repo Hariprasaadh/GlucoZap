@@ -359,7 +359,7 @@ export default function SkinScanPage() {
                   onClick={stopCamera}
                   variant="outline"
                   size="sm"
-                  className="border-white/20 text-white hover:bg-white/10"
+                  className="border-white/20 bg-black/90 text-white hover:bg-white/10 hover:text-white"
                 >
                   <X className="w-4 h-4 mr-2" />
                   Cancel
@@ -373,13 +373,12 @@ export default function SkinScanPage() {
                   playsInline
                   muted
                   className="w-full h-full object-cover"
-                  style={{ transform: 'scaleX(-1)' }} // **FIX 4: Mirror the video for better UX**
+                  style={{ transform: 'scaleX(-1)' }} 
                 />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="w-64 h-64 border-2 border-white/50 rounded-lg"></div>
                 </div>
                 
-                {/* **FIX 5: Loading indicator while camera starts** */}
                 {stream && !videoRef.current?.srcObject && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/50">
                     <div className="text-white">Starting camera...</div>
