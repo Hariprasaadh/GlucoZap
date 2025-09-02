@@ -1,6 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 from PIL import Image
 import io
@@ -12,6 +12,7 @@ from ultralytics import YOLO
 import base64
 import cv2
 import torch
+import mediapipe as mp
 from datetime import datetime
 import logging
 
@@ -26,6 +27,11 @@ model = None
 CLASS_NAMES = ["Normal-weight", "Overweight", "Mild-obesity", "Moderate-obesity", "Severe-obesity"]
 CONFIDENCE_THRESHOLD = 0.3
 IMAGE_SIZE = 224
+
+# Initialize MediaPipe Face Mesh
+mp_face_mesh = mp.solutions.face_mesh
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
 
 # Model paths to search for
 MODEL_PATHS = [
@@ -203,6 +209,55 @@ def preprocess_image(image: Image.Image) -> np.ndarray:
     except Exception as e:
         logger.error(f"Image preprocessing error: {e}")
         raise HTTPException(status_code=400, detail="Image preprocessing failed")
+
+def create_face_mesh_image(image_array):
+    """Create face mesh overlay on the input image"""
+    try:
+        # Convert to RGB if needed
+        if len(image_array.shape) == 3 and image_array.shape[2] == 3:
+            image_rgb = image_array
+        else:
+            image_rgb = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
+        
+        # Initialize face mesh
+        with mp_face_mesh.FaceMesh(
+            static_image_mode=True,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5) as face_mesh:
+            
+            # Process the image
+            results = face_mesh.process(image_rgb)
+            
+            # Create a copy for drawing
+            annotated_image = image_rgb.copy()
+            face_detected = False
+            
+            # Draw face mesh if detected
+            if results.multi_face_landmarks:
+                face_detected = True
+                for face_landmarks in results.multi_face_landmarks:
+                    # Draw face mesh contours
+                    mp_drawing.draw_landmarks(
+                        image=annotated_image,
+                        landmark_list=face_landmarks,
+                        connections=mp_face_mesh.FACEMESH_CONTOURS,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_contours_style())
+                    
+                    # Draw face mesh tesselation
+                    mp_drawing.draw_landmarks(
+                        image=annotated_image,
+                        landmark_list=face_landmarks,
+                        connections=mp_face_mesh.FACEMESH_TESSELATION,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style())
+            
+            return annotated_image, face_detected
+            
+    except Exception as e:
+        logger.error(f"Error creating face mesh: {e}")
+        return image_array, False
 
 def postprocess_results(results, image_shape: tuple) -> Dict[str, Any]:
     """Process YOLO classification results and return formatted output"""
@@ -384,13 +439,13 @@ async def model_info():
 @app.post("/predict")
 async def predict_bmi(file: UploadFile = File(...)):
     """
-    Predict BMI category from uploaded image
+    Predict BMI category from uploaded image and return face mesh image with BMI data in headers
     
     Args:
         file: Image file (JPEG, PNG, WEBP)
     
     Returns:
-        JSON response with BMI prediction, confidence, probabilities, and health recommendations
+        StreamingResponse with face mesh image and BMI prediction data in headers
     """
     try:
         # Check if model is loaded
@@ -415,23 +470,65 @@ async def predict_bmi(file: UploadFile = File(...)):
                 detail="Image validation failed. Please ensure image is in supported format (JPEG/PNG), reasonable size, and good quality."
             )
         
-        # Preprocess image
+        # Convert to RGB if needed
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Convert to numpy array for face mesh
+        image_array = np.array(image)
+        
+        # Preprocess image for BMI prediction
         image_np = preprocess_image(image)
         
-        # Make prediction
+        # Make BMI prediction
         try:
             results = model.predict(image_np, verbose=False)
         except Exception as e:
             logger.error(f"Model prediction error: {e}")
             raise HTTPException(status_code=500, detail="Prediction failed")
         
-        # Process results
-        response_data = postprocess_results(results, image_np.shape)
+        # Process BMI results
+        bmi_data = postprocess_results(results, image_np.shape)
         
-        logger.info(f"BMI prediction completed: {response_data['prediction']['bmi_category']} "
-                   f"(confidence: {response_data['prediction']['confidence']:.3f})")
+        # Create face mesh image
+        face_mesh_image, face_detected = create_face_mesh_image(image_array)
         
-        return JSONResponse(content=response_data)
+        # Convert face mesh image to PIL and then to bytes
+        face_mesh_pil = Image.fromarray(face_mesh_image)
+        
+        # Convert image to byte stream
+        buf = io.BytesIO()
+        face_mesh_pil.save(buf, format="JPEG")
+        buf.seek(0)
+        
+        # Prepare BMI prediction data for headers
+        prediction_data = {
+            "status": "success",
+            "filename": file.filename,
+            "bmi_prediction": bmi_data["prediction"],
+            "probabilities": bmi_data["probabilities"],
+            "analysis": bmi_data["analysis"],
+            "face_mesh": {
+                "face_detected": face_detected,
+                "landmarks_drawn": face_detected
+            },
+            "image_info": {
+                "original_size": f"{image.size[0]}x{image.size[1]}",
+                "processed_for_bmi": bmi_data["image_info"]["processed_size"]
+            }
+        }
+        
+        logger.info(f"BMI prediction completed: {bmi_data['prediction']['bmi_category']} "
+                   f"(confidence: {bmi_data['prediction']['confidence']:.3f}), Face detected: {face_detected}")
+        
+        return StreamingResponse(
+            buf, 
+            media_type="image/jpeg",
+            headers={
+                "bmi-prediction": str(prediction_data),
+                "Content-Disposition": f"inline; filename=face_mesh_bmi_{file.filename}"
+            }
+        )
         
     except HTTPException:
         raise
