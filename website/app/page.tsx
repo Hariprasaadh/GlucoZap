@@ -1,5 +1,4 @@
 'use client'
-import { Suspense } from 'react'
 import Spline from '@splinetool/react-spline'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
