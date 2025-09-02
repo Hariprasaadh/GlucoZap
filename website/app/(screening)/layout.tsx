@@ -4,8 +4,8 @@ export default function ScreeningLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto py-4">
+    <div >
+      <div >
         {children}
       </div>
     </div>
