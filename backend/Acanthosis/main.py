@@ -16,7 +16,7 @@ app.add_middleware(
 )
 
 # Load YOLO model
-model = YOLO(r"C:\Users\Asus\OneDrive\Documents\GitHub\GlucoZap\ml\Acanthosis_Nigricans_Detection\runs\detect\train2\weights\best.pt")
+model = YOLO("../../ml/Acanthosis_Nigricans_Detection/runs/detect/train2/weights/best.pt")
 
 @app.get("/")
 def read_root():
@@ -51,4 +51,4 @@ async def predict(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("yolo_fastapi:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
