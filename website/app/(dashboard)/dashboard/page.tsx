@@ -292,7 +292,7 @@ export default function Dashboard() {
                           asChild
                           className="bg-gray-800/50 border-gray-600/50 text-gray-300 hover:bg-blue-900/30 hover:border-blue-500/50 hover:text-blue-300 transition-all duration-200 hover:shadow-md"
                         >
-                          <Link href={`/reports/${index}`} className="flex items-center gap-2">
+                          <Link href={`/report`} className="flex items-center gap-2">
                             <FileText size={16} />
                             View Details
                           </Link>
