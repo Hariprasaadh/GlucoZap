@@ -47,7 +47,7 @@ const screeningSteps = [
     accuracy: '82%'
   },
   { 
-    id: 'metabolic-disturbances', 
+    id: 'metabolic-disturbance', 
     title: 'Metabolic Disturbances', 
     description: 'Detailed examination of metabolic health and early detection of disturbances',
     duration: 3,
@@ -63,6 +63,15 @@ const screeningSteps = [
     icon: '👁️',
     status: 'Recommended',
     accuracy: '94%'
+  },
+  { 
+    id: 'medical-transcript', 
+    title: 'Medical Transcript Analysis', 
+    description: 'Analyze medical transcripts to identify key health indicators',
+    duration: 5,
+    icon: '📝',
+    status: 'Optional',
+    accuracy: '90%'
   },
 ]
 

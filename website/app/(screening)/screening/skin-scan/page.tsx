@@ -22,9 +22,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
+import { useScreeningStore } from '@/lib/store'
 
 export default function SkinScanPage() {
   const router = useRouter()
+  const { updateScreeningData } = useScreeningStore()
   const [step, setStep] = useState(1)
   const [isProcessing, setIsProcessing] = useState(false)
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
@@ -164,6 +166,7 @@ export default function SkinScanPage() {
         try {
           const parsedDetections = JSON.parse(detectionsHeader.replace(/'/g, '"'))
           setDetections(parsedDetections)
+          updateScreeningData({ skinScan: { detections: parsedDetections } })
         } catch (parseError) {
           console.error('Failed to parse detections:', parseError)
           setDetections([])
@@ -210,6 +213,10 @@ export default function SkinScanPage() {
     stopCamera()
   }
 
+  const finishTest = () => {
+    router.push('/screening/screening');
+  };
+
   const progressValue = (step / 3) * 100
 
   return (
@@ -218,7 +225,7 @@ export default function SkinScanPage() {
       <nav className="border-b border-white/10 sticky top-0 z-50 bg-black/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex items-center justify-between h-16">
-            <Link href="/screening" className="flex items-center space-x-3">
+            <Link href="/screening/screening" className="flex items-center space-x-3">
               <ArrowLeft className="w-5 h-5" />
               <span className="font-semibold">Back to Assessment</span>
             </Link>
@@ -516,6 +523,14 @@ export default function SkinScanPage() {
                   <p className="text-white/70">No signs of Acanthosis Nigricans detected</p>
                 </div>
               )}
+              <div className="flex justify-center mt-8">
+                <Button
+                  onClick={finishTest}
+                  className="bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-400 hover:to-cyan-400 text-white font-bold px-8 py-3"
+                >
+                  Finish
+                </Button>
+              </div>
             </div>
             
             {/* Information Card */}

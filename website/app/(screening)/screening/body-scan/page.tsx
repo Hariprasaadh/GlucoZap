@@ -20,7 +20,8 @@ import {
   ImageIcon,
   X,
   Info,
-  Clock
+  Clock,
+  Eye
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -29,9 +30,16 @@ export default function FacialAnalysis() {
   const [currentView, setCurrentView] = useState<'instructions' | 'camera' | 'results'>('instructions')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [bmiResults, setBmiResults] = useState<any>(null)
+  const [simpleResults, setSimpleResults] = useState<any>(null)
   const [processedImage, setProcessedImage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [debugInfo, setDebugInfo] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const addDebugInfo = (info: string) => {
+    console.log('[DEBUG]', info)
+    setDebugInfo(prev => [...prev.slice(-10), `${new Date().toLocaleTimeString()}: ${info}`])
+  }
 
   const analysisAreas = [
     {
@@ -101,29 +109,69 @@ export default function FacialAnalysis() {
     return response.blob()
   }
 
-  // Enhanced function to parse BMI prediction header with better error handling
-  const parseBMIPrediction = (headerValue: string) => {
-    try {
-      console.log('Raw BMI header:', headerValue)
-      
-      // Clean up the header string to make it valid JSON
-      let jsonString = headerValue
-        .replace(/'/g, '"')           // Replace single quotes with double quotes
-        .replace(/True/g, 'true')     // Replace Python True with JSON true
-        .replace(/False/g, 'false')   // Replace Python False with JSON false
-        .replace(/None/g, 'null')     // Replace Python None with JSON null
-      
-      console.log('Cleaned JSON string:', jsonString)
-      
-      const parsed = JSON.parse(jsonString)
-      console.log('Parsed BMI data:', parsed)
-      
-      return parsed
-    } catch (error) {
-      console.error('Failed to parse BMI prediction header:', error)
-      console.error('Original header value:', headerValue)
-      return null
+  // Call analyze-simple endpoint for simplified BMI data
+  const analyzeSimple = async (imageBlob: Blob) => {
+    const formData = new FormData()
+    formData.append('file', imageBlob, 'face-image.jpg')
+
+    addDebugInfo('Calling /analyze-simple endpoint...')
+    const response = await fetch('http://172.16.45.171:8001/analyze-simple', {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Simple analysis failed: ${response.status}`)
     }
+
+    const data = await response.json()
+    addDebugInfo('✅ Simple analysis data received')
+    console.log('Simple analysis data:', data)
+    return data
+  }
+
+  // Get processed image with face mesh using predict endpoint
+  const getProcessedImageAndData = async (imageBlob: Blob) => {
+    const formData = new FormData()
+    formData.append('file', imageBlob, 'face-image.jpg')
+
+    addDebugInfo('Calling /predict endpoint...')
+    const response = await fetch('http://172.16.45.171:8001/predict', {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Predict endpoint failed: ${response.status}`)
+    }
+
+    // Get BMI prediction from headers
+    const bmiPredictionHeader = response.headers.get('bmi-prediction')
+    let headerData = null
+    
+    if (bmiPredictionHeader) {
+      try {
+        // Parse header data
+        let jsonString = bmiPredictionHeader
+          .replace(/'/g, '"')
+          .replace(/True/g, 'true')
+          .replace(/False/g, 'false')
+          .replace(/None/g, 'null')
+        
+        headerData = JSON.parse(jsonString)
+        addDebugInfo('✅ Header data parsed successfully')
+      } catch (parseError) {
+        addDebugInfo('⚠️ Failed to parse header data')
+        console.warn('Failed to parse header data:', parseError)
+      }
+    }
+
+    // Get processed image
+    const imageBlob_response = await response.blob()
+    const imageUrl = URL.createObjectURL(imageBlob_response)
+    addDebugInfo('✅ Processed image received')
+    
+    return { imageUrl, headerData }
   }
 
   const handleAnalyze = async () => {
@@ -131,59 +179,53 @@ export default function FacialAnalysis() {
     
     setIsAnalyzing(true)
     setError(null)
+    setBmiResults(null)
+    setSimpleResults(null)
+    setProcessedImage(null)
+    setDebugInfo([])
     
     try {
+      addDebugInfo('Starting analysis...')
+      
       // Convert base64 to blob
       const blob = await base64ToBlob(capturedImage)
-      
-      // Create form data
-      const formData = new FormData()
-      formData.append('file', blob, 'face-image.jpg')
+      addDebugInfo('Image converted to blob')
 
-      // Call BMI FastAPI backend
-      const response = await fetch('http://172.16.45.171:8000/predict', {
-        method: 'POST',
-        body: formData,
-      })
+      // Call both endpoints simultaneously
+      const [simpleData, predictData] = await Promise.allSettled([
+        analyzeSimple(blob),
+        getProcessedImageAndData(blob)
+      ])
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`HTTP error! status: ${response.status} - ${errorText}`)
+      // Handle simple analysis results
+      if (simpleData.status === 'fulfilled') {
+        setSimpleResults(simpleData.value)
+        addDebugInfo('✅ Simple analysis complete')
+      } else {
+        addDebugInfo(`❌ Simple analysis failed: ${simpleData.reason}`)
+        console.error('Simple analysis failed:', simpleData.reason)
       }
 
-      // Log all response headers for debugging
-      console.log('All response headers:')
-      response.headers.forEach((value, key) => {
-        console.log(`${key}: ${value}`)
-      })
-
-      // Get BMI prediction from headers
-      const bmiPredictionHeader = response.headers.get('bmi-prediction')
-      console.log('BMI prediction header found:', bmiPredictionHeader)
-      
-      if (bmiPredictionHeader) {
-        const parsedBMI = parseBMIPrediction(bmiPredictionHeader)
-        if (parsedBMI) {
-          console.log('Successfully parsed BMI results:', parsedBMI)
-          setBmiResults(parsedBMI)
+      // Handle predict results
+      if (predictData.status === 'fulfilled') {
+        const { imageUrl, headerData } = predictData.value
+        setProcessedImage(imageUrl)
+        if (headerData) {
+          setBmiResults(headerData)
+          addDebugInfo('✅ Predict analysis complete')
         } else {
-          console.warn('Failed to parse BMI prediction from headers')
-          setError('Failed to parse analysis results')
-          setBmiResults(null)
+          addDebugInfo('⚠️ Predict returned image but no header data')
         }
       } else {
-        console.warn('No bmi-prediction header found in response')
-        setError('No analysis data received from server')
-        setBmiResults(null)
+        addDebugInfo(`❌ Predict failed: ${predictData.reason}`)
+        console.error('Predict failed:', predictData.reason)
       }
-
-      // Get the processed image with face mesh
-      const imageBlob = await response.blob()
-      const processedImageUrl = URL.createObjectURL(imageBlob)
-      setProcessedImage(processedImageUrl)
       
       setCurrentView('results')
+      addDebugInfo('Analysis complete, showing results')
+      
     } catch (error) {
+      addDebugInfo(`❌ Analysis failed: ${error}`)
       console.error('BMI Analysis failed:', error)
       setError(error instanceof Error ? error.message : 'Failed to analyze image')
     } finally {
@@ -191,22 +233,42 @@ export default function FacialAnalysis() {
     }
   }
 
-  const getBmiRiskLevel = () => {
-    if (!bmiResults?.bmi_prediction?.bmi_category) {
+  const getBmiRiskLevel = (category: string, confidence?: number) => {
+    if (!category) {
       return { level: 'No Data', color: 'text-gray-300', bg: 'bg-gray-500/20', icon: '❓' }
     }
     
-    const category = bmiResults.bmi_prediction.bmi_category.toLowerCase()
+    const categoryLower = category.toLowerCase()
     
-    if (category.includes('severe')) {
+    // Handle unknown classes
+    if (categoryLower.startsWith('class_')) {
+      return { 
+        level: 'Unclassified', 
+        color: 'text-gray-300', 
+        bg: 'bg-gray-500/20', 
+        icon: '❓' 
+      }
+    }
+    
+    // Low confidence predictions
+    if (confidence && confidence < 0.3) {
+      return { 
+        level: 'Low Confidence', 
+        color: 'text-yellow-300', 
+        bg: 'bg-yellow-500/20', 
+        icon: '⚠️' 
+      }
+    }
+    
+    if (categoryLower.includes('severe')) {
       return { level: 'High Risk', color: 'text-red-300', bg: 'bg-red-500/20', icon: '🚨' }
-    } else if (category.includes('moderate-obesity')) {
+    } else if (categoryLower.includes('moderate-obesity')) {
       return { level: 'High Risk', color: 'text-orange-300', bg: 'bg-orange-500/20', icon: '⚠️' }
-    } else if (category.includes('mild-obesity')) {
+    } else if (categoryLower.includes('mild-obesity')) {
       return { level: 'Moderate Risk', color: 'text-yellow-300', bg: 'bg-yellow-500/20', icon: '⚡' }
-    } else if (category.includes('overweight')) {
+    } else if (categoryLower.includes('overweight')) {
       return { level: 'Mild Risk', color: 'text-yellow-300', bg: 'bg-yellow-500/20', icon: '📊' }
-    } else if (category.includes('normal')) {
+    } else if (categoryLower.includes('normal')) {
       return { level: 'Normal Weight', color: 'text-green-300', bg: 'bg-green-500/20', icon: '✅' }
     }
     
@@ -216,21 +278,29 @@ export default function FacialAnalysis() {
   const resetAnalysis = () => {
     setCurrentView('instructions')
     setBmiResults(null)
+    setSimpleResults(null)
     setProcessedImage(null)
     setError(null)
     setIsAnalyzing(false)
+    setDebugInfo([])
     // Clean up the blob URL to prevent memory leaks
     if (processedImage) {
       URL.revokeObjectURL(processedImage)
     }
   }
 
-  const formatDate = (isoString: string) => {
-    try {
-      return new Date(isoString).toLocaleString()
-    } catch {
-      return 'Unknown time'
+  const formatBMICategory = (category: string) => {
+    if (category.startsWith('class_')) {
+      return `Unknown Category (${category})`
     }
+    return category.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())
+  }
+
+  const formatProbability = (prob: number) => {
+    if (prob < 0.001) {
+      return (prob * 100).toExponential(2) + '%'
+    }
+    return (prob * 100).toFixed(2) + '%'
   }
 
   return (
@@ -268,6 +338,37 @@ export default function FacialAnalysis() {
                 <span className="font-medium">Error: {error}</span>
               </div>
             </div>
+          </motion.div>
+        )}
+
+        {/* Debug Information Panel */}
+        {(isAnalyzing || debugInfo.length > 0) && (
+          <motion.div 
+            className="mb-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
+            <Card className="bg-white/5 border border-white/10 backdrop-blur-sm">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Eye className="w-4 h-4 text-blue-400" />
+                  <h4 className="text-sm font-semibold text-white">Analysis Debug Log</h4>
+                </div>
+                <div className="space-y-1 text-xs font-mono text-gray-300 max-h-40 overflow-y-auto">
+                  {debugInfo.map((info, index) => (
+                    <div key={index} className="border-l-2 border-gray-600 pl-2">
+                      {info}
+                    </div>
+                  ))}
+                  {isAnalyzing && (
+                    <div className="border-l-2 border-blue-500 pl-2 text-blue-400">
+                      <RefreshCw className="w-3 h-3 inline mr-1 animate-spin" />
+                      Processing...
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </motion.div>
         )}
 
@@ -427,7 +528,7 @@ export default function FacialAnalysis() {
               </div>
             </motion.div>
 
-            {/* Action Button */}
+            {/* Analysis Button */}
             <motion.div 
               className="flex justify-center items-center"
               initial={{ opacity: 0 }}
@@ -491,7 +592,7 @@ export default function FacialAnalysis() {
                   <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
                     <p className="text-blue-300 text-sm">
                       <Shield className="w-4 h-4 inline mr-1" />
-                      Your privacy is protected: Images are processed locally and not stored permanently.
+                      Your privacy is protected: Images are processed securely and not stored permanently.
                     </p>
                   </div>
                 </CardContent>
@@ -525,44 +626,7 @@ export default function FacialAnalysis() {
                 </Button>
               </div>
               
-              {/* Analysis Summary Card */}
-              {bmiResults && (
-                <div className="mb-6 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20 rounded-lg">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{getBmiRiskLevel().icon}</span>
-                      <div>
-                        <h4 className="text-lg font-bold text-white">{bmiResults.bmi_prediction.bmi_category}</h4>
-                        <p className={`text-sm ${getBmiRiskLevel().color}`}>{getBmiRiskLevel().level}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-white">
-                        {(bmiResults.bmi_prediction.confidence * 100).toFixed(1)}%
-                      </div>
-                      <div className="text-sm text-white/60">Confidence</div>
-                    </div>
-                  </div>
-                  
-                  {/* Analysis Metadata */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-white/60 pt-3 border-t border-white/10">
-                    <div className="flex items-center gap-1">
-                      <User className="w-3 h-3" />
-                      <span>File: {bmiResults.filename}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <ImageIcon className="w-3 h-3" />
-                      <span>Size: {bmiResults.image_info?.original_size}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span>Status: {bmiResults.status}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Processed Image with Face Mesh */}
+              {/* Show processed image first */}
               {processedImage && (
                 <div className="mb-6">
                   <h4 className="text-sm font-semibold text-white/80 mb-3 flex items-center gap-2">
@@ -579,49 +643,41 @@ export default function FacialAnalysis() {
                 </div>
               )}
               
-              {/* Health Status */}
-              {bmiResults?.bmi_prediction?.health_status && (
-                <div className="mb-6">
-                  <h4 className="text-sm font-semibold text-white/80 mb-3">Health Assessment:</h4>
-                  <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                    <p className="text-white/90">{bmiResults.bmi_prediction.health_status}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Probabilities Distribution */}
-              {bmiResults?.probabilities && (
-                <div className="mb-6">
-                  <h4 className="text-sm font-semibold text-white/80 mb-3">Category Probabilities:</h4>
-                  <div className="space-y-3">
-                    {Object.entries(bmiResults.probabilities)
-                      .sort(([,a], [,b]) => (b as number) - (a as number)) // Sort by probability descending
-                      .map(([category, probability]) => (
-                      <div key={category} className="flex items-center justify-between">
-                        <span className="text-white/70 text-sm flex-1">{category.replace('-', ' ')}</span>
-                        <div className="flex items-center gap-2 flex-1">
-                          <div className="w-full bg-white/10 rounded-full h-2.5">
-                            <div 
-                              className={`h-2.5 rounded-full transition-all duration-1000 ${
-                                category === bmiResults.bmi_prediction.bmi_category 
-                                  ? 'bg-gradient-to-r from-purple-500 to-pink-500' 
-                                  : 'bg-white/30'
-                              }`}
-                              style={{ width: `${(probability as number) * 100}%` }}
-                            />
-                          </div>
+              {/* Simple Analysis Results (from analyze-simple endpoint) */}
+              {simpleResults && (
+                <div className="mb-6 p-4 bg-gradient-to-r from-green-500/10 to-blue-500/10 border border-green-500/20 rounded-lg">
+                  <h4 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Zap className="w-5 h-5" />
+                    Quick Analysis Summary
+                  </h4>
+                  
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="text-2xl">{getBmiRiskLevel(simpleResults.class_with_highest_probability).icon}</span>
+                        <div>
+                          <h5 className="text-white font-bold">
+                            {formatBMICategory(simpleResults.class_with_highest_probability)}
+                          </h5>
+                          <p className={`text-sm ${getBmiRiskLevel(simpleResults.class_with_highest_probability).color}`}>
+                            {getBmiRiskLevel(simpleResults.class_with_highest_probability).level}
+                          </p>
                         </div>
-                        <span className="text-white text-sm font-mono w-16 text-right">
-                          {((probability as number) * 100).toFixed(2)}%
-                        </span>
                       </div>
-                    ))}
+                    </div>
+                    
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-white">
+                        {formatProbability(simpleResults.probability)}
+                      </div>
+                      <div className="text-sm text-white/60">Confidence</div>
+                    </div>
                   </div>
                 </div>
               )}
 
-              {/* Health Recommendations */}
-              {bmiResults?.analysis?.recommendations && (
+              {/* Health Recommendations from Simple Analysis */}
+              {simpleResults?.recommendations && (
                 <div className="mb-6">
                   <h4 className="text-sm font-semibold text-white/80 mb-3 flex items-center gap-2">
                     <Shield className="w-4 h-4" />
@@ -629,9 +685,9 @@ export default function FacialAnalysis() {
                   </h4>
                   <div className="bg-white/5 rounded-lg p-4 border border-white/10">
                     <ul className="space-y-3">
-                      {bmiResults.analysis.recommendations.map((rec: string, index: number) => (
+                      {simpleResults.recommendations.map((rec: string, index: number) => (
                         <li key={index} className="text-white/80 text-sm flex items-start gap-3">
-                          <span className="text-purple-400 mt-1 font-bold">•</span>
+                          <span className="text-green-400 mt-1 font-bold">•</span>
                           <span>{rec}</span>
                         </li>
                       ))}
@@ -639,73 +695,145 @@ export default function FacialAnalysis() {
                   </div>
                 </div>
               )}
-              
-              {/* Detection Metrics */}
-              {bmiResults?.face_mesh && (
-                <div className="mb-6">
-                  <h4 className="text-sm font-semibold text-white/80 mb-3">Detection Metrics:</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-                      <div className="text-white/60 text-xs mb-1">Face Detection</div>
-                      <div className="text-white font-medium flex items-center gap-1">
-                        {bmiResults.face_mesh.face_detected ? (
-                          <>
-                            <span className="text-green-400">●</span>
-                            <span>Detected</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="text-red-400">●</span>
-                            <span>Not Detected</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-                      <div className="text-white/60 text-xs mb-1">Landmarks</div>
-                      <div className="text-white font-medium flex items-center gap-1">
-                        {bmiResults.face_mesh.landmarks_drawn ? (
-                          <>
-                            <span className="text-green-400">●</span>
-                            <span>Mapped</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="text-red-400">●</span>
-                            <span>Not Mapped</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
-              {/* Analysis Details */}
-              {bmiResults?.analysis && (
-                <div className="mb-6">
-                  <h4 className="text-sm font-semibold text-white/80 mb-3">Analysis Details:</h4>
-                  <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <span className="text-white/60">Most Likely Category:</span>
-                        <p className="text-white font-medium">{bmiResults.analysis.most_likely}</p>
+              {/* Detailed Analysis Results (from predict endpoint headers) */}
+              {bmiResults && (
+                <>
+                  <div className="mb-6">
+                    <h4 className="text-lg font-semibold text-white/80 mb-4 flex items-center gap-2">
+                      <Eye className="w-5 h-5" />
+                      Detailed Analysis
+                    </h4>
+                    
+                    {/* Analysis Summary */}
+                    <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20 rounded-lg">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{getBmiRiskLevel(bmiResults.bmi_prediction?.bmi_category, bmiResults.bmi_prediction?.confidence).icon}</span>
+                          <div>
+                            <h5 className="text-lg font-bold text-white">
+                              {formatBMICategory(bmiResults.bmi_prediction?.bmi_category || 'Unknown')}
+                            </h5>
+                            <p className={`text-sm ${getBmiRiskLevel(bmiResults.bmi_prediction?.bmi_category, bmiResults.bmi_prediction?.confidence).color}`}>
+                              {getBmiRiskLevel(bmiResults.bmi_prediction?.bmi_category, bmiResults.bmi_prediction?.confidence).level}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold text-white">
+                            {bmiResults.bmi_prediction?.confidence ? (bmiResults.bmi_prediction.confidence * 100).toFixed(1) : '0.0'}%
+                          </div>
+                          <div className="text-sm text-white/60">Confidence</div>
+                        </div>
                       </div>
-                      <div>
-                        <span className="text-white/60">Confidence Level:</span>
-                        <p className="text-white font-medium">{bmiResults.analysis.confidence_level}</p>
+                      
+                      {/* Metadata */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-white/60 pt-3 border-t border-white/10">
+                        <div className="flex items-center gap-1">
+                          <User className="w-3 h-3" />
+                          <span>File: {bmiResults.filename?.substring(0, 20) || 'uploaded'}...</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <ImageIcon className="w-3 h-3" />
+                          <span>Size: {bmiResults.image_info?.original_size || 'Unknown'}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          <span>Status: {bmiResults.status || 'success'}</span>
+                        </div>
                       </div>
                     </div>
+
+                    {/* Health Status */}
+                    {bmiResults.bmi_prediction?.health_status && (
+                      <div className="mb-4">
+                        <h5 className="text-sm font-semibold text-white/80 mb-2">Health Assessment:</h5>
+                        <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+                          <p className="text-white/90 text-sm">{bmiResults.bmi_prediction.health_status}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Detection Metrics */}
+                    {bmiResults.face_mesh && (
+                      <div className="mb-4">
+                        <h5 className="text-sm font-semibold text-white/80 mb-2">Detection Metrics:</h5>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+                            <div className="text-white/60 text-xs mb-1">Face Detection</div>
+                            <div className="text-white font-medium flex items-center gap-1">
+                              {bmiResults.face_mesh.face_detected ? (
+                                <>
+                                  <span className="text-green-400">●</span>
+                                  <span>Detected</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-red-400">●</span>
+                                  <span>Not Detected</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+                            <div className="text-white/60 text-xs mb-1">Landmarks</div>
+                            <div className="text-white font-medium flex items-center gap-1">
+                              {bmiResults.face_mesh.landmarks_drawn ? (
+                                <>
+                                  <span className="text-green-400">●</span>
+                                  <span>Mapped</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-red-400">●</span>
+                                  <span>Not Mapped</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Full Probabilities */}
+                    {bmiResults.probabilities && (
+                      <div className="mb-4">
+                        <h5 className="text-sm font-semibold text-white/80 mb-2">All BMI Category Probabilities:</h5>
+                        <div className="space-y-2">
+                          {Object.entries(bmiResults.probabilities)
+                            .sort(([,a], [,b]) => (b as number) - (a as number))
+                            .map(([category, probability]) => (
+                            <div key={category} className="flex items-center justify-between">
+                              <span className="text-white/70 text-sm flex-1 capitalize">
+                                {category.replace('-', ' ')}
+                              </span>
+                              <div className="flex items-center gap-2 flex-1">
+                                <div className="w-full bg-white/10 rounded-full h-2">
+                                  <div 
+                                    className="h-2 rounded-full transition-all duration-1000 bg-gradient-to-r from-purple-500 to-pink-500"
+                                    style={{ width: `${Math.max((probability as number) * 100, 0.1)}%` }}
+                                  />
+                                </div>
+                              </div>
+                              <span className="text-white text-xs font-mono w-16 text-right">
+                                {formatProbability(probability as number)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
+                </>
               )}
               
-              {!bmiResults && (
+              {/* Show appropriate message if no results */}
+              {!simpleResults && !bmiResults && !processedImage && (
                 <div className="text-center py-8">
                   <AlertTriangle className="w-12 h-12 mx-auto text-yellow-400 mb-3" />
-                  <p className="text-white/70">No BMI analysis results available</p>
+                  <p className="text-white/70">No analysis results available</p>
                   <p className="text-white/50 text-sm mt-2">
-                    The analysis may have failed or the response format was unexpected.
+                    Both analysis endpoints failed. Please check the debug log above for more details.
                   </p>
                 </div>
               )}
@@ -720,9 +848,10 @@ export default function FacialAnalysis() {
                 </div>
                 <div className="space-y-3 text-sm text-white/70">
                   <p>
-                    This AI model analyzes facial features to estimate BMI category using computer vision and facial landmarks. 
-                    The face mesh overlay shows detected facial landmarks used in the analysis.
+                    This analysis uses two AI endpoints: a simplified analysis for quick results and a detailed analysis with facial landmarks. 
+                    Both use computer vision to estimate BMI categories based on facial features.
                   </p>
+                  
                   <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
                     <p className="text-yellow-300 text-sm">
                       <AlertTriangle className="w-4 h-4 inline mr-1" />
@@ -747,4 +876,3 @@ export default function FacialAnalysis() {
     </div>
   )
 }
-  

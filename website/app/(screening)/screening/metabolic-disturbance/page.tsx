@@ -25,14 +25,24 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 
+// Configuration - match your FastAPI server
+const API_BASE_URL = 'http://172.16.45.171:8002' // Changed from 8002 to 8002
+
 export default function DarkCirclesAnalysis() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
   const [currentView, setCurrentView] = useState<'instructions' | 'camera' | 'results'>('instructions')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [detectionResults, setDetectionResults] = useState<any>(null)
+  const [simpleResults, setSimpleResults] = useState<any>(null)
   const [processedImage, setProcessedImage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [debugInfo, setDebugInfo] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const addDebugInfo = (info: string) => {
+    console.log('[DEBUG]', info)
+    setDebugInfo(prev => [...prev.slice(-10), `${new Date().toLocaleTimeString()}: ${info}`])
+  }
 
   const analysisAreas = [
     {
@@ -77,10 +87,11 @@ export default function DarkCirclesAnalysis() {
       reader.onload = (e) => {
         const result = e.target?.result as string
         setCapturedImage(result)
+        setError(null)
       }
       reader.readAsDataURL(file)
     } else {
-      setError('Please select a valid image file')
+      setError('Please select a valid image file (JPEG, PNG, WebP)')
     }
   }
 
@@ -102,109 +113,173 @@ export default function DarkCirclesAnalysis() {
     return response.blob()
   }
 
-  // Enhanced function to parse detection results header
-  const parseDetectionResults = (headerValue: string) => {
+  // Improved header parsing with better error handling
+  const parseDetectionData = (headerValue: string) => {
     try {
-      console.log('Raw detection header:', headerValue)
+      addDebugInfo('Parsing detection header...')
       
-      // Clean up the header string to make it valid JSON
-      let jsonString = headerValue
-        .replace(/'/g, '"')           // Replace single quotes with double quotes
-        .replace(/True/g, 'true')     // Replace Python True with JSON true
-        .replace(/False/g, 'false')   // Replace Python False with JSON false
-        .replace(/None/g, 'null')     // Replace Python None with JSON null
+      // Clean and normalize the header string
+      let cleanedString = headerValue
+        .trim()
+        .replace(/'/g, '"')
+        .replace(/True/g, 'true')
+        .replace(/False/g, 'false')
+        .replace(/None/g, 'null')
       
-      console.log('Cleaned JSON string:', jsonString)
+      // Handle potential encoding issues
+      if (cleanedString.startsWith('b"') || cleanedString.startsWith("b'")) {
+        cleanedString = cleanedString.slice(2, -1)
+      }
       
-      const parsed = JSON.parse(jsonString)
+      const parsed = JSON.parse(cleanedString)
+      addDebugInfo('✅ Detection data parsed successfully')
       console.log('Parsed detection data:', parsed)
-      
       return parsed
     } catch (error) {
-      console.error('Failed to parse detection header:', error)
-      console.error('Original header value:', headerValue)
+      addDebugInfo(`❌ Detection parsing failed: ${error}`)
+      console.error('Failed to parse detection data:', error, 'Original:', headerValue)
       return null
     }
   }
 
+  // Call analyze endpoint for simple JSON response
+  const analyzeSimple = async (imageBlob: Blob) => {
+    addDebugInfo('Calling /analyze endpoint...')
+    
+    const formData = new FormData()
+    formData.append('file', imageBlob, 'dark-circles-image.jpg')
+
+    const response = await fetch(`${API_BASE_URL}/analyze`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Analysis failed: ${response.status} - ${errorText}`)
+    }
+
+    const data = await response.json()
+    addDebugInfo('✅ Simple analysis data received')
+    console.log('Simple analysis data:', data)
+    return data
+  }
+
+  // Get processed image with detections using detect endpoint
+  const getDetectionResults = async (imageBlob: Blob) => {
+    addDebugInfo('Calling /detect endpoint...')
+    
+    const formData = new FormData()
+    formData.append('file', imageBlob, 'dark-circles-image.jpg')
+
+    const response = await fetch(`${API_BASE_URL}/detect`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Detection failed: ${response.status} - ${errorText}`)
+    }
+
+    // Get detection data from headers
+    const detectionsHeader = response.headers.get('detections')
+    let headerData = null
+    
+    if (detectionsHeader) {
+      headerData = parseDetectionData(detectionsHeader)
+    } else {
+      addDebugInfo('⚠️ No detections header found in response')
+    }
+
+    // Get processed image with annotations
+    const imageBlob_response = await response.blob()
+    const imageUrl = URL.createObjectURL(imageBlob_response)
+    addDebugInfo('✅ Detection results received')
+    
+    return { imageUrl, headerData }
+  }
+
   const handleAnalyze = async () => {
-    if (!capturedImage) return
+    if (!capturedImage) {
+      setError('Please capture or upload an image first')
+      return
+    }
     
     setIsAnalyzing(true)
     setError(null)
+    setDetectionResults(null)
+    setSimpleResults(null)
+    setProcessedImage(null)
+    setDebugInfo([])
     
     try {
+      addDebugInfo('Starting dark circles analysis...')
+      
       // Convert base64 to blob
       const blob = await base64ToBlob(capturedImage)
-      
-      // Create form data
-      const formData = new FormData()
-      formData.append('file', blob, 'eye-image.jpg')
+      addDebugInfo(`Image converted to blob (${blob.size} bytes, ${blob.type})`)
 
-      // Call Dark Circles Detection FastAPI backend
-      const response = await fetch('http://172.16.45.171:8000/predict', {
-        method: 'POST',
-        body: formData,
-      })
+      // Call both endpoints with proper error handling
+      const analysisPromises = [
+        analyzeSimple(blob).catch(err => ({ error: err.message, type: 'simple' })),
+        getDetectionResults(blob).catch(err => ({ error: err.message, type: 'detection' }))
+      ]
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`HTTP error! status: ${response.status} - ${errorText}`)
-      }
+      const [simpleResult, detectionResult] = await Promise.all(analysisPromises)
 
-      // Log all response headers for debugging
-      console.log('All response headers:')
-      response.headers.forEach((value, key) => {
-        console.log(`${key}: ${value}`)
-      })
-
-      // Get detection results from headers
-      const detectionHeader = response.headers.get('detections')
-      console.log('Detection header found:', detectionHeader)
-      
-      if (detectionHeader) {
-        const parsedResults = parseDetectionResults(detectionHeader)
-        if (parsedResults) {
-          console.log('Successfully parsed detection results:', parsedResults)
-          setDetectionResults(parsedResults)
-        } else {
-          console.warn('Failed to parse detection results from headers')
-          setError('Failed to parse analysis results')
-          setDetectionResults(null)
-        }
+      // Handle simple analysis results
+      if ('error' in simpleResult) {
+        addDebugInfo(`❌ Simple analysis failed: ${simpleResult.error}`)
+        console.error('Simple analysis error:', simpleResult.error)
       } else {
-        console.warn('No detections header found in response')
-        setError('No analysis data received from server')
-        setDetectionResults(null)
+        setSimpleResults(simpleResult)
+        addDebugInfo('✅ Simple analysis complete')
       }
 
-      // Get the processed image with bounding boxes
-      const imageBlob = await response.blob()
-      const processedImageUrl = URL.createObjectURL(imageBlob)
-      setProcessedImage(processedImageUrl)
+      // Handle detection results
+      if ('error' in detectionResult) {
+        addDebugInfo(`❌ Detection failed: ${detectionResult.error}`)
+        console.error('Detection error:', detectionResult.error)
+      } else {
+        const { imageUrl, headerData } = detectionResult
+        setProcessedImage(imageUrl)
+        if (headerData) {
+          setDetectionResults(headerData)
+          addDebugInfo('✅ Detection analysis complete')
+        } else {
+          addDebugInfo('⚠️ Detection returned image but no header data')
+        }
+      }
+
+      // Check if we got at least one successful result
+      if ('error' in simpleResult && 'error' in detectionResult) {
+        throw new Error('Both analysis endpoints failed. Please check your FastAPI server.')
+      }
       
       setCurrentView('results')
+      addDebugInfo('Analysis complete, showing results')
+      
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      addDebugInfo(`❌ Analysis failed: ${errorMessage}`)
       console.error('Dark circles analysis failed:', error)
-      setError(error instanceof Error ? error.message : 'Failed to analyze image')
+      setError(errorMessage)
     } finally {
       setIsAnalyzing(false)
     }
   }
 
-  const getSeverityLevel = () => {
-    if (!detectionResults?.has_dark_circles) {
+  const getSeverityLevel = (hasDetections: boolean, detectionCount: number, avgConfidence?: number) => {
+    if (!hasDetections || detectionCount === 0) {
       return { level: 'No Detection', color: 'text-green-300', bg: 'bg-green-500/20', icon: '✅' }
     }
     
-    const detectionCount = detectionResults.detection_count || 0
-    const avgConfidence = detectionResults.detections?.length > 0 
-      ? detectionResults.detections.reduce((sum: number, d: any) => sum + d.confidence, 0) / detectionResults.detections.length 
-      : 0
-
-    if (detectionCount >= 2 && avgConfidence > 0.8) {
+    const confidence = avgConfidence || 0
+    
+    if (detectionCount >= 2 && confidence > 0.8) {
       return { level: 'Severe', color: 'text-red-300', bg: 'bg-red-500/20', icon: '🔴' }
-    } else if (detectionCount >= 1 && avgConfidence > 0.6) {
+    } else if (detectionCount >= 1 && confidence > 0.6) {
       return { level: 'Moderate', color: 'text-orange-300', bg: 'bg-orange-500/20', icon: '🟡' }
     } else if (detectionCount >= 1) {
       return { level: 'Mild', color: 'text-yellow-300', bg: 'bg-yellow-500/20', icon: '🟨' }
@@ -216,13 +291,45 @@ export default function DarkCirclesAnalysis() {
   const resetAnalysis = () => {
     setCurrentView('instructions')
     setDetectionResults(null)
+    setSimpleResults(null)
     setProcessedImage(null)
     setError(null)
     setIsAnalyzing(false)
+    setDebugInfo([])
     // Clean up the blob URL to prevent memory leaks
     if (processedImage) {
       URL.revokeObjectURL(processedImage)
     }
+  }
+
+  const getHealthRecommendations = (hasDetections: boolean, detectionCount: number) => {
+    if (!hasDetections || detectionCount === 0) {
+      return [
+        "Great! No dark circles detected",
+        "Maintain current sleep schedule",
+        "Continue healthy skincare routine",
+        "Keep staying hydrated"
+      ]
+    }
+    
+    if (detectionCount >= 2) {
+      return [
+        "Prioritize getting 7-9 hours of quality sleep",
+        "Use eye creams with caffeine or retinol",
+        "Apply cold compresses to reduce puffiness",
+        "Stay well-hydrated throughout the day",
+        "Manage stress levels with relaxation techniques",
+        "Consider consulting a dermatologist if persistent"
+      ]
+    }
+    
+    return [
+      "Ensure adequate sleep (7-8 hours per night)",
+      "Use a gentle eye moisturizer before bed",
+      "Apply sunscreen around the eye area daily",
+      "Consider getting more rest if feeling fatigued",
+      "Stay hydrated and eat antioxidant-rich foods"
+    ]
   }
 
   return (
@@ -259,7 +366,44 @@ export default function DarkCirclesAnalysis() {
                 <AlertTriangle className="w-5 h-5" />
                 <span className="font-medium">Error: {error}</span>
               </div>
+              <p className="text-red-300/70 text-sm mt-2">
+                Make sure your FastAPI server is running on {API_BASE_URL}
+              </p>
             </div>
+          </motion.div>
+        )}
+
+        {/* Debug Information Panel */}
+        {(isAnalyzing || debugInfo.length > 0) && (
+          <motion.div 
+            className="mb-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
+            <Card className="bg-white/5 border border-white/10 backdrop-blur-sm">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Eye className="w-4 h-4 text-blue-400" />
+                  <h4 className="text-sm font-semibold text-white">Analysis Debug Log</h4>
+                  <Badge className="text-xs bg-blue-500/20 text-blue-300">
+                    API: {API_BASE_URL}
+                  </Badge>
+                </div>
+                <div className="space-y-1 text-xs font-mono text-gray-300 max-h-40 overflow-y-auto">
+                  {debugInfo.map((info, index) => (
+                    <div key={index} className="border-l-2 border-gray-600 pl-2">
+                      {info}
+                    </div>
+                  ))}
+                  {isAnalyzing && (
+                    <div className="border-l-2 border-blue-500 pl-2 text-blue-400">
+                      <RefreshCw className="w-3 h-3 inline mr-1 animate-spin" />
+                      Processing...
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </motion.div>
         )}
 
@@ -456,7 +600,7 @@ export default function DarkCirclesAnalysis() {
               </div>
             </motion.div>
 
-            {/* Action Button */}
+            {/* Analysis Button */}
             <motion.div 
               className="flex justify-center items-center"
               initial={{ opacity: 0 }}
@@ -554,122 +698,142 @@ export default function DarkCirclesAnalysis() {
                 </Button>
               </div>
               
-              {/* Detection Summary Card */}
-              {detectionResults && (
-                <div className="mb-6 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20 rounded-lg">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{getSeverityLevel().icon}</span>
-                      <div>
-                        <h4 className="text-lg font-bold text-white">
-                          {detectionResults.has_dark_circles ? 'Dark Circles Detected' : 'No Dark Circles Detected'}
-                        </h4>
-                        <p className={`text-sm ${getSeverityLevel().color}`}>{getSeverityLevel().level}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-white">
-                        {detectionResults.detection_count}
-                      </div>
-                      <div className="text-sm text-white/60">Detections</div>
-                    </div>
-                  </div>
-                  
-                  {/* Analysis Metadata */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-white/60 pt-3 border-t border-white/10">
-                    <div className="flex items-center gap-1">
-                      <ImageIcon className="w-3 h-3" />
-                      <span>File: {detectionResults.filename}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Target className="w-3 h-3" />
-                      <span>Size: {detectionResults.image_size}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span>Model: {detectionResults.model_type}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Processed Image with Bounding Boxes */}
+              {/* Show processed image with detections */}
               {processedImage && (
                 <div className="mb-6">
                   <h4 className="text-sm font-semibold text-white/80 mb-3 flex items-center gap-2">
-                    <Eye className="w-4 h-4" />
-                    Detection Visualization
+                    <Target className="w-4 h-4" />
+                    Detection Results
                   </h4>
                   <div className="aspect-video bg-black rounded-lg overflow-hidden border border-white/10">
                     <img
                       src={processedImage}
-                      alt="Dark circles detection with bounding boxes"
+                      alt="Dark circles detection analysis"
                       className="w-full h-full object-contain"
                     />
                   </div>
                 </div>
               )}
+              
+              {/* Simple Analysis Results */}
+              {simpleResults && (
+                <div className="mb-6 p-4 bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border border-blue-500/20 rounded-lg">
+                  <h4 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Eye className="w-5 h-5" />
+                    Quick Assessment
+                  </h4>
+                  
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="text-2xl">
+                          {getSeverityLevel(simpleResults.has_dark_circles, simpleResults.detection_count).icon}
+                        </span>
+                        <div>
+                          <h5 className="text-white font-bold">
+                            {simpleResults.has_dark_circles ? 'Dark Circles Detected' : 'No Dark Circles Detected'}
+                          </h5>
+                          <p className={`text-sm ${getSeverityLevel(simpleResults.has_dark_circles, simpleResults.detection_count).color}`}>
+                            {getSeverityLevel(simpleResults.has_dark_circles, simpleResults.detection_count).level}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-white">
+                        {simpleResults.detection_count}
+                      </div>
+                      <div className="text-sm text-white/60">
+                        Detection{simpleResults.detection_count !== 1 ? 's' : ''} Found
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-              {/* Detection Details */}
-              {detectionResults?.detections && detectionResults.detections.length > 0 && (
+              {/* Health Recommendations */}
+              {(simpleResults || detectionResults) && (
                 <div className="mb-6">
-                  <h4 className="text-sm font-semibold text-white/80 mb-3">Detection Details:</h4>
+                  <h4 className="text-sm font-semibold text-white/80 mb-3 flex items-center gap-2">
+                    <Shield className="w-4 h-4" />
+                    Health & Wellness Recommendations:
+                  </h4>
+                  <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                    <ul className="space-y-3">
+                      {getHealthRecommendations(
+                        simpleResults?.has_dark_circles || detectionResults?.has_dark_circles || false,
+                        simpleResults?.detection_count || detectionResults?.detection_count || 0
+                      ).map((rec: string, index: number) => (
+                        <li key={index} className="text-white/80 text-sm flex items-start gap-3">
+                          <span className="text-cyan-400 mt-1 font-bold">•</span>
+                          <span>{rec}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* Detailed Detection Results */}
+              {detectionResults && detectionResults.detections && detectionResults.detections.length > 0 && (
+                <div className="mb-6">
+                  <h4 className="text-lg font-semibold text-white/80 mb-4 flex items-center gap-2">
+                    <Search className="w-5 h-5" />
+                    Detailed Detection Analysis
+                  </h4>
+                  
+                  {/* Detection Summary */}
+                  <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20 rounded-lg">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                      <div>
+                        <div className="text-2xl font-bold text-white">{detectionResults.detection_count}</div>
+                        <div className="text-sm text-white/60">Total Detections</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-white">{detectionResults.confidence_threshold}</div>
+                        <div className="text-sm text-white/60">Confidence Threshold</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl font-bold text-white">{detectionResults.model_type}</div>
+                        <div className="text-sm text-white/60">Model Used</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Individual Detections */}
                   <div className="space-y-3">
+                    <h5 className="text-sm font-semibold text-white/80">Individual Detections:</h5>
                     {detectionResults.detections.map((detection: any, index: number) => (
-                      <div key={detection.detection_id} className="bg-white/5 rounded-lg p-4 border border-white/10">
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                      <div key={index} className="bg-white/5 rounded-lg p-4 border border-white/10">
+                        <div className="flex justify-between items-start mb-2">
                           <div>
-                            <span className="text-white/60">Detection #{detection.detection_id}</span>
-                            <p className="text-white font-medium">{detection.class}</p>
+                            <h6 className="text-white font-medium">Detection #{detection.detection_id}</h6>
+                            <p className="text-white/60 text-sm">Class: {detection.class}</p>
                           </div>
-                          <div>
-                            <span className="text-white/60">Confidence:</span>
-                            <p className="text-white font-medium">{(detection.confidence * 100).toFixed(1)}%</p>
-                          </div>
-                          <div>
-                            <span className="text-white/60">Position:</span>
-                            <p className="text-white font-medium text-xs">
-                              ({detection.bounding_box.x1.toFixed(0)}, {detection.bounding_box.y1.toFixed(0)})
-                            </p>
-                          </div>
-                          <div>
-                            <span className="text-white/60">Size:</span>
-                            <p className="text-white font-medium text-xs">
-                              {(detection.bounding_box.x2 - detection.bounding_box.x1).toFixed(0)} × {(detection.bounding_box.y2 - detection.bounding_box.y1).toFixed(0)}
-                            </p>
-                          </div>
+                          <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30">
+                            {(detection.confidence * 100).toFixed(1)}% confidence
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-white/50">
+                          <div>X1: {detection.bounding_box.x1}</div>
+                          <div>Y1: {detection.bounding_box.y1}</div>
+                          <div>X2: {detection.bounding_box.x2}</div>
+                          <div>Y2: {detection.bounding_box.y2}</div>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
-
-              {/* Analysis Settings */}
-              {detectionResults && (
-                <div className="mb-6">
-                  <h4 className="text-sm font-semibold text-white/80 mb-3">Analysis Settings:</h4>
-                  <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <span className="text-white/60">Confidence Threshold:</span>
-                        <p className="text-white font-medium">{detectionResults.confidence_threshold}</p>
-                      </div>
-                      <div>
-                        <span className="text-white/60">Model Type:</span>
-                        <p className="text-white font-medium">{detectionResults.model_type}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
               
-              {!detectionResults && (
+              {/* Show appropriate message if no results */}
+              {!simpleResults && !detectionResults && !processedImage && (
                 <div className="text-center py-8">
                   <AlertTriangle className="w-12 h-12 mx-auto text-yellow-400 mb-3" />
-                  <p className="text-white/70">No detection results available</p>
+                  <p className="text-white/70">No analysis results available</p>
                   <p className="text-white/50 text-sm mt-2">
-                    The analysis may have failed or the response format was unexpected.
+                    Both analysis endpoints failed. Please check the debug log above for details.
                   </p>
                 </div>
               )}
@@ -680,18 +844,20 @@ export default function DarkCirclesAnalysis() {
               <CardContent className="p-6">
                 <div className="flex items-center gap-3 mb-4">
                   <Info className="w-5 h-5 text-blue-400" />
-                  <h3 className="text-lg font-semibold text-white">About This Analysis</h3>
+                  <h3 className="text-lg font-semibold text-white">About Dark Circles Detection</h3>
                 </div>
                 <div className="space-y-3 text-sm text-white/70">
                   <p>
-                    This AI model uses YOLOv11 computer vision to detect and analyze dark circles around the eyes. 
-                    The bounding boxes show the precise locations where dark circles were detected.
+                    This AI system uses YOLOv11 computer vision to detect dark circles around the eyes, 
+                    which can be indicators of fatigue, stress, dehydration, or lack of sleep. 
+                    The analysis provides both simple detection results and detailed bounding box information.
                   </p>
+                  
                   <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
                     <p className="text-yellow-300 text-sm">
                       <AlertTriangle className="w-4 h-4 inline mr-1" />
-                      <strong>Disclaimer:</strong> This is an AI analysis tool for informational purposes. 
-                      Consult healthcare professionals for medical concerns about dark circles or eye health.
+                      <strong>Note:</strong> This analysis is for wellness monitoring and should not be used for medical diagnosis. 
+                      Consult healthcare professionals for persistent concerns about fatigue or eye health.
                     </p>
                   </div>
                 </div>
@@ -705,7 +871,7 @@ export default function DarkCirclesAnalysis() {
       <footer className="border-t border-white/10 bg-white/5 mt-20">
         <div className="max-w-6xl mx-auto text-center px-6 py-6">
           <p className="text-xs text-white/40">
-            © 2025 GlucoZap. Dark circles detection for health and wellness insights.
+            © 2025 GlucoZap. Dark circles detection for wellness monitoring purposes only.
           </p>
         </div>
       </footer>

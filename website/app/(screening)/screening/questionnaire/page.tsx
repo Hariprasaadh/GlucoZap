@@ -28,6 +28,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
+import { useScreeningStore } from '@/lib/store'
 
 interface FormData {
   Age: string
@@ -55,6 +56,7 @@ interface FormData {
 
 export default function DiabetesQuestionnaire() {
   const router = useRouter()
+  const { updateScreeningData } = useScreeningStore()
   const [currentStep, setCurrentStep] = useState(1)
   const [formData, setFormData] = useState<FormData>({
     Age: '',
@@ -150,6 +152,7 @@ export default function DiabetesQuestionnaire() {
       const result = await response.json()
       setResults(result)
       setShowResults(true)
+      updateScreeningData({ questionnaire: result })
       
     } catch (error) {
       console.error('Risk assessment failed:', error)
@@ -199,13 +202,17 @@ export default function DiabetesQuestionnaire() {
     setError(null)
   }
 
+  const finishTest = () => {
+    router.push('/screening/screening');
+  };
+
   return (
     <div className="min-h-screen bg-black text-white">
       {/* Navigation */}
       <nav className="border-b border-white/10 sticky top-0 z-50 bg-black/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex items-center justify-between h-16">
-            <Link href="/screening" className="flex items-center space-x-3">
+            <Link href="/screening/screening" className="flex items-center space-x-3">
               <ArrowLeft className="w-5 h-5" />
               <span className="font-semibold">Back to Assessment</span>
             </Link>
@@ -815,7 +822,7 @@ export default function DiabetesQuestionnaire() {
                 onClick={() => setCurrentStep(Math.max(1, currentStep - 1))}
                 disabled={currentStep === 1}
                 variant="outline"
-                className="border-white/20 text-white hover:bg-white/10 disabled:opacity-50"
+                className="border-white/20 text-white bg-black hover:bg-white/10 hover:text-white disabled:opacity-50"
               >
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Previous
@@ -922,6 +929,14 @@ export default function DiabetesQuestionnaire() {
                           <li>• Manage stress effectively</li>
                         </ul>
                       </div>
+                    </div>
+                    <div className="flex justify-center mt-8">
+                      <Button
+                        onClick={finishTest}
+                        className="bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-400 hover:to-cyan-400 text-white font-bold px-8 py-3"
+                      >
+                        Finish
+                      </Button>
                     </div>
                   </>
                 )}

@@ -28,8 +28,8 @@ import {
   Zap
 } from 'lucide-react'
 
-// API Configuration - You can change this IP address
-const RETINOPATHY_API_BASE = 'http://192.168.1.100:8000' // Change this to your backend IP
+// API Configuration - Change this to match your FastAPI server
+const RETINOPATHY_API_BASE = 'http://172.16.45.171:8004' // Change this to your backend IP/port
 
 interface RetinopathyResult {
   predicted_class: string
@@ -62,6 +62,7 @@ interface AnalysisResponse {
   }
 }
 
+// Updated to match FastAPI class names exactly
 const CLASS_INFO = {
   "No_DR": {
     color: "bg-green-500/20 text-green-300 border-green-500/30",
@@ -129,7 +130,13 @@ export default function EyeScanPage() {
   const checkApiHealth = async () => {
     setApiStatus('checking')
     try {
-      const response = await fetch(`${RETINOPATHY_API_BASE}/health`)
+      const response = await fetch(`${RETINOPATHY_API_BASE}/health`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      })
+      
       if (response.ok) {
         const data = await response.json()
         setApiStatus(data.model_loaded ? 'online' : 'offline')
@@ -194,13 +201,20 @@ export default function EyeScanPage() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
-      if (file.type.startsWith('image/')) {
-        setUploadedFile(file)
-        setCurrentStep('analyzing')
-        analyzeImageFile(file)
-      } else {
+      // Validate file type and size (matching FastAPI validation)
+      if (!file.type.startsWith('image/')) {
         setError('Please select a valid image file (JPEG, PNG, etc.)')
+        return
       }
+      
+      if (file.size > 20 * 1024 * 1024) { // 20MB limit from FastAPI
+        setError('File size too large. Please select an image under 20MB.')
+        return
+      }
+      
+      setUploadedFile(file)
+      setCurrentStep('analyzing')
+      analyzeImageFile(file)
     }
   }
 
@@ -213,18 +227,19 @@ export default function EyeScanPage() {
       const response = await fetch(imageData)
       const blob = await response.blob()
       
-      // Create form data
+      // Create form data with proper file naming
       const formData = new FormData()
-      formData.append('file', blob, 'retinal-image.jpg')
+      formData.append('file', blob, 'captured-retinal-image.jpg')
       
-      // Send to backend
+      // Send to FastAPI /analyze endpoint
       const apiResponse = await fetch(`${RETINOPATHY_API_BASE}/analyze`, {
         method: 'POST',
         body: formData,
       })
       
       if (!apiResponse.ok) {
-        throw new Error(`Analysis failed: ${apiResponse.statusText}`)
+        const errorData = await apiResponse.text()
+        throw new Error(`Analysis failed (${apiResponse.status}): ${errorData}`)
       }
       
       const result: AnalysisResponse = await apiResponse.json()
@@ -248,13 +263,15 @@ export default function EyeScanPage() {
       const formData = new FormData()
       formData.append('file', file)
       
+      // Send to FastAPI /analyze endpoint
       const apiResponse = await fetch(`${RETINOPATHY_API_BASE}/analyze`, {
         method: 'POST', 
         body: formData,
       })
       
       if (!apiResponse.ok) {
-        throw new Error(`Analysis failed: ${apiResponse.statusText}`)
+        const errorData = await apiResponse.text()
+        throw new Error(`Analysis failed (${apiResponse.status}): ${errorData}`)
       }
       
       const result: AnalysisResponse = await apiResponse.json()
@@ -295,6 +312,11 @@ export default function EyeScanPage() {
       case 'very severe': return 'text-purple-400'
       default: return 'text-gray-400'
     }
+  }
+
+  // Helper function to format class names for display
+  const formatClassName = (className: string) => {
+    return className.replace('_', ' ').replace('DR', 'Diabetic Retinopathy')
   }
 
   return (
@@ -364,6 +386,16 @@ export default function EyeScanPage() {
           </Alert>
         )} 
 
+        {/* API Offline Warning */}
+        {apiStatus === 'offline' && (
+          <Alert className="mb-6 border-orange-500/50 bg-orange-500/10">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription className="text-orange-300">
+              The analysis API is currently offline. Please check your FastAPI server is running on {RETINOPATHY_API_BASE}
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Instruction Step */}
         {currentStep === 'instruction' && (
           <motion.div
@@ -414,24 +446,30 @@ export default function EyeScanPage() {
 
             <div className="grid md:grid-cols-2 gap-6">
               <Card className="bg-gray-900/50 border-gray-800 hover:border-blue-500/50 transition-colors cursor-pointer"
-                    onClick={() => setCurrentStep('capture')}>
+                    onClick={() => apiStatus === 'online' && setCurrentStep('capture')}>
                 <CardContent className="p-6 text-center">
                   <Camera className="w-12 h-12 text-blue-400 mx-auto mb-4" />
                   <h3 className="text-xl font-semibold mb-2">Take Photo</h3>
                   <p className="text-gray-400 mb-4">Use your device camera to capture a retinal image</p>
-                  <Button className="w-full bg-blue-600 hover:bg-blue-700">
+                  <Button 
+                    className="w-full bg-blue-600 hover:bg-blue-700"
+                    disabled={apiStatus !== 'online'}
+                  >
                     Start Camera
                   </Button>
                 </CardContent>
               </Card>
 
               <Card className="bg-gray-900/50 border-gray-800 hover:border-purple-500/50 transition-colors cursor-pointer"
-                    onClick={() => setCurrentStep('upload')}>
+                    onClick={() => apiStatus === 'online' && setCurrentStep('upload')}>
                 <CardContent className="p-6 text-center">
                   <Upload className="w-12 h-12 text-purple-400 mx-auto mb-4" />
                   <h3 className="text-xl font-semibold mb-2">Upload Image</h3>
                   <p className="text-gray-400 mb-4">Upload an existing retinal image from your device</p>
-                  <Button className="w-full bg-purple-600 hover:bg-purple-700">
+                  <Button 
+                    className="w-full bg-purple-600 hover:bg-purple-700"
+                    disabled={apiStatus !== 'online'}
+                  >
                     Choose File
                   </Button>
                 </CardContent>
@@ -481,6 +519,7 @@ export default function EyeScanPage() {
                     <Button
                       onClick={captureImage}
                       className="bg-blue-600 hover:bg-blue-700 px-8"
+                      disabled={isAnalyzing}
                     >
                       <Camera className="w-4 h-4 mr-2" />
                       Capture
@@ -515,7 +554,7 @@ export default function EyeScanPage() {
                   <span>Upload Retinal Image</span>
                 </CardTitle>
                 <CardDescription>
-                  Select a high-quality retinal image from your device
+                  Select a high-quality retinal image from your device (Max 20MB)
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -533,6 +572,7 @@ export default function EyeScanPage() {
                     accept="image/*"
                     onChange={handleFileUpload}
                     className="hidden"
+                    disabled={isAnalyzing}
                   />
                 </div>
 
@@ -593,7 +633,7 @@ export default function EyeScanPage() {
                     <Badge 
                       className={`${CLASS_INFO[analysisResult.analysis.prediction as keyof typeof CLASS_INFO]?.color || 'bg-gray-500/20 text-gray-300'} text-lg px-4 py-2`}
                     >
-                      {analysisResult.analysis.prediction.replace('_', ' ')}
+                      {formatClassName(analysisResult.analysis.prediction)}
                     </Badge>
                     <div>
                       <p className="text-2xl font-bold mb-2">
@@ -612,7 +652,7 @@ export default function EyeScanPage() {
                   <div className="space-y-2">
                     {Object.entries(analysisResult.analysis.class_probabilities).map(([className, probability]) => (
                       <div key={className} className="flex items-center justify-between">
-                        <span className="text-gray-300">{className.replace('_', ' ')}</span>
+                        <span className="text-gray-300">{formatClassName(className)}</span>
                         <div className="flex items-center space-x-2">
                           <Progress 
                             value={probability * 100} 
@@ -638,6 +678,14 @@ export default function EyeScanPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
+                <Alert className="border-red-500/50 bg-red-500/10 mb-4">
+                  <Shield className="h-4 w-4" />
+                  <AlertDescription className="text-red-300">
+                    <strong>Medical Disclaimer:</strong> This is an AI screening tool, not a medical diagnosis. 
+                    Always consult qualified healthcare professionals for proper evaluation.
+                  </AlertDescription>
+                </Alert>
+                
                 <div className="space-y-3">
                   {analysisResult.recommendations.map((recommendation, index) => (
                     <div key={index} className="flex items-start space-x-3">
