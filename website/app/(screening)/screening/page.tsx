@@ -55,6 +55,15 @@ const screeningSteps = [
     status: 'Recommended',
     accuracy: '91%'
   },
+  { 
+    id: 'eye-scan', 
+    title: 'Diabetic Retinopathy Screening', 
+    description: 'AI-powered retinal analysis to detect diabetic retinopathy and eye complications',
+    duration: 4,
+    icon: '👁️',
+    status: 'Recommended',
+    accuracy: '94%'
+  },
 ]
 
 export default function ScreeningHub() {
