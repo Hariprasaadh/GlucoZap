@@ -5,7 +5,7 @@ import joblib
 import uvicorn
 
 # Load trained pipeline
-pipeline = joblib.load(r"C:\Users\Asus\OneDrive\Documents\Diabetes_Pred\diabetes_risk_model.pkl")
+pipeline = joblib.load(r"C:\Users\Dell\Documents\GitHub\GlucoZap\backend\Diabetes_Questionnaire\diabetes_risk_model.pkl")
 
 app = FastAPI(title="Diabetes Risk Predictor API")
 
@@ -48,4 +48,5 @@ def predict(data: dict):
     return {"Diabetes Risk Confidence Score": round(float(prediction), 2)}
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="localhost", port=8000, reload=True)
+    uvicorn.run("main:app", host="", port=8006, reload=True)
+ 

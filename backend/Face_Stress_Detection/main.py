@@ -41,10 +41,10 @@ if not os.path.exists(STATIC_DIR):
 
 
 MODEL_PATHS = [
-    "../../ml/eye_dark_circles/runs/detect/dark_circles_yolov11/weights/best.pt",
-    "../eye_dark_circles/runs/detect/dark_circles_yolov11/weights/best.pt",
+    "../../ml/Face_Stress_Detection/runs/detect/dark_circles_yolov11/weights/best.pt",
+    "../Face_Stress_Detection/runs/detect/dark_circles_yolov11/weights/best.pt",
     "runs/detect/dark_circles_yolov11/weights/best.pt",
-    "../../ml/eye_dark_circles/yolo11s.pt",
+    "../../ml/Face_Stress_Detection/yolo11s.pt",
     "yolo11s.pt"
 ]
 
@@ -290,5 +290,32 @@ async def detect_dark_circles(file: UploadFile = File(...)):
         }
     )
 
+@app.post("/analyze")
+async def analyze_dark_circles(file: UploadFile = File(...)):
+    """Analyze uploaded image for dark circles and return count and detection flag as JSON."""
+    if not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    image_data = await file.read()
+    try:
+        image = Image.open(io.BytesIO(image_data))
+    except:
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    if not validate_image(image):
+        raise HTTPException(status_code=400, detail="Image validation failed")
+
+    # Run prediction (no image output, just analysis)
+    prediction_result = predict_dark_circles(image, filename="")
+
+    # Only return detection_count and has_dark_circles
+    response_data = {
+        "detection_count": prediction_result["detection_count"],
+        "has_dark_circles": prediction_result["has_dark_circles"]
+    }
+
+    return JSONResponse(content=response_data)
+
+
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True, log_level="info")

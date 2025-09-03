@@ -6,34 +6,28 @@ from PIL import Image
 import io
 import os
 import numpy as np
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import uvicorn
 from ultralytics import YOLO
-import base64
-import cv2
 import torch
+import cv2
 import mediapipe as mp
 from datetime import datetime
 import logging
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global model variable
 model = None
 
-# BMI class configuration
 CLASS_NAMES = ["Normal-weight", "Overweight", "Mild-obesity", "Moderate-obesity", "Severe-obesity"]
 CONFIDENCE_THRESHOLD = 0.3
 IMAGE_SIZE = 224
 
-# Initialize MediaPipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
-# Model paths to search for
 MODEL_PATHS = [
     "../../ml/bmi/bmi_classification/yolov8_bmi_5class_v2/weights/best.pt",
     "../../ml/bmi/bmi_classification/yolov8_bmi_5class/weights/best.pt",
@@ -43,31 +37,23 @@ MODEL_PATHS = [
 ]
 
 class MockModel:
-    """Mock model for testing when real model loading fails"""
     def __init__(self):
         self.names = {i: name for i, name in enumerate(CLASS_NAMES)}
-    
     def predict(self, image, **kwargs):
-        """Mock prediction that returns random results for testing"""
         import random
-        
         class MockResults:
             def __init__(self):
-                self.probs = MockProbs()
-        
-        class MockProbs:
-            def __init__(self):
-                # Generate random probabilities that sum to 1
-                probs = [random.random() for _ in range(5)]
-                total = sum(probs)
-                self.data = torch.tensor([p/total for p in probs])
-                self.top1 = int(torch.argmax(self.data))
-                self.top1conf = self.data[self.top1]
-        
+                self.probs = self.MockProbs()
+            class MockProbs:
+                def __init__(self):
+                    probs = [random.random() for _ in range(5)]
+                    total = sum(probs)
+                    self.data = torch.tensor([p / total for p in probs])
+                    self.top1 = int(torch.argmax(self.data))
+                    self.top1conf = self.data[self.top1]
         return [MockResults()]
 
 def find_model_path():
-    """Find the best available BMI model path"""
     logger.info("Searching for trained BMI model...")
     for path in MODEL_PATHS:
         if os.path.exists(path):
@@ -75,21 +61,15 @@ def find_model_path():
             return path
         else:
             logger.debug(f"✗ Not found: {path}")
-    
     logger.warning("No trained BMI model found")
     return None
 
 def load_model():
-    """Load the trained BMI classification model with fallback methods"""
     global model
-    
     model_path = find_model_path()
-    
     if model_path:
         try:
             logger.info(f"Loading BMI model from: {model_path}")
-            
-            # Add PyTorch safe globals for compatibility
             torch.serialization.add_safe_globals([
                 'ultralytics.nn.tasks.ClassificationModel',
                 'ultralytics.nn.modules.head.Classify',
@@ -99,32 +79,24 @@ def load_model():
                 'ultralytics.nn.modules.block.SPPF',
                 'collections.OrderedDict'
             ])
-            
-            # Try loading with weights_only=False
             try:
                 original_load = torch.load
                 def safe_load(*args, **kwargs):
                     kwargs['weights_only'] = False
                     return original_load(*args, **kwargs)
-                
                 torch.load = safe_load
                 model = YOLO(model_path)
                 torch.load = original_load
                 logger.info("✓ Custom BMI model loaded successfully!")
                 return
-                
             except Exception as e1:
                 torch.load = original_load
                 logger.warning(f"Custom BMI model loading failed: {e1}")
-                
         except Exception as e:
             logger.error(f"Error with custom BMI model: {e}")
-    
-    # Fallback to pretrained classification model
     try:
         logger.info("Loading pretrained classification model...")
         model_names = ['yolov8n-cls.pt', 'yolov8s-cls.pt']
-        
         for model_name in model_names:
             try:
                 logger.info(f"Attempting to load {model_name}...")
@@ -135,12 +107,9 @@ def load_model():
             except Exception as e:
                 logger.warning(f"Failed to load {model_name}: {e}")
                 continue
-        
-        # If all models fail, create a mock model for API testing
         logger.warning("All model loading attempts failed. Creating mock model for testing...")
         model = MockModel()
         logger.info("✓ Mock model created for testing purposes")
-        
     except Exception as e:
         logger.error(f"✗ Failed to load any model: {e}")
         model = MockModel()
@@ -148,140 +117,97 @@ def load_model():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handle startup and shutdown events"""
-    # Startup
     logger.info("Starting BMI Classification API...")
     load_model()
     yield
-    # Shutdown
     logger.info("Shutting down BMI Classification API...")
 
 app = FastAPI(
     title="BMI Classification API",
     description="AI-powered BMI classification using YOLOv8 classification model",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 def validate_image(image: Image.Image) -> bool:
-    """Validate uploaded image"""
     try:
-        # Check image format
         if image.format not in ['JPEG', 'PNG', 'JPG', 'WEBP']:
             return False
-        
-        # Check image size (max 20MB)
         if len(image.tobytes()) > 20 * 1024 * 1024:
             return False
-        
-        # Check dimensions (reasonable limits)
         width, height = image.size
         if width > 4000 or height > 4000 or width < 50 or height < 50:
             return False
-        
         return True
     except Exception as e:
         logger.error(f"Image validation error: {e}")
         return False
 
 def preprocess_image(image: Image.Image) -> np.ndarray:
-    """Preprocess image for model inference"""
     try:
-        # Convert to RGB if needed
         if image.mode != 'RGB':
             image = image.convert('RGB')
-        
-        # Resize to model input size while maintaining aspect ratio
         image.thumbnail((IMAGE_SIZE, IMAGE_SIZE), Image.Resampling.LANCZOS)
-        
-        # Convert PIL to numpy array
-        image_np = np.array(image)
-        return image_np
+        return np.array(image)
     except Exception as e:
         logger.error(f"Image preprocessing error: {e}")
         raise HTTPException(status_code=400, detail="Image preprocessing failed")
 
 def create_face_mesh_image(image_array):
-    """Create face mesh overlay on the input image"""
     try:
-        # Convert to RGB if needed
         if len(image_array.shape) == 3 and image_array.shape[2] == 3:
             image_rgb = image_array
         else:
             image_rgb = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
-        
-        # Initialize face mesh
         with mp_face_mesh.FaceMesh(
             static_image_mode=True,
             max_num_faces=1,
             refine_landmarks=True,
             min_detection_confidence=0.5) as face_mesh:
-            
-            # Process the image
             results = face_mesh.process(image_rgb)
-            
-            # Create a copy for drawing
             annotated_image = image_rgb.copy()
             face_detected = False
-            
-            # Draw face mesh if detected
             if results.multi_face_landmarks:
                 face_detected = True
                 for face_landmarks in results.multi_face_landmarks:
-                    # Draw face mesh contours
                     mp_drawing.draw_landmarks(
                         image=annotated_image,
                         landmark_list=face_landmarks,
                         connections=mp_face_mesh.FACEMESH_CONTOURS,
                         landmark_drawing_spec=None,
                         connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_contours_style())
-                    
-                    # Draw face mesh tesselation
                     mp_drawing.draw_landmarks(
                         image=annotated_image,
                         landmark_list=face_landmarks,
                         connections=mp_face_mesh.FACEMESH_TESSELATION,
                         landmark_drawing_spec=None,
                         connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style())
-            
             return annotated_image, face_detected
-            
     except Exception as e:
         logger.error(f"Error creating face mesh: {e}")
         return image_array, False
 
 def postprocess_results(results, image_shape: tuple) -> Dict[str, Any]:
-    """Process YOLO classification results and return formatted output"""
     try:
         for result in results:
             if hasattr(result, 'probs') and result.probs is not None:
                 probs = result.probs
-                
-                # Get prediction details
                 top_class_idx = int(probs.top1)
                 confidence = float(probs.top1conf.item())
                 predicted_class = CLASS_NAMES[top_class_idx] if top_class_idx < len(CLASS_NAMES) else f"class_{top_class_idx}"
-                
-                # Get all probabilities
                 all_probs = probs.data.cpu().numpy()
-                
-                # Create probability distribution
                 class_probabilities = {}
                 for i, (class_name, prob) in enumerate(zip(CLASS_NAMES, all_probs[:len(CLASS_NAMES)])):
                     class_probabilities[class_name] = float(prob)
-                
-                # Determine BMI category and health implications
                 health_status = get_health_status(predicted_class, confidence)
-                
                 return {
                     "prediction": {
                         "bmi_category": predicted_class,
@@ -300,8 +226,7 @@ def postprocess_results(results, image_shape: tuple) -> Dict[str, Any]:
                     },
                     "timestamp": datetime.now().isoformat()
                 }
-        
-        # If no valid results found
+        # In case no valid result:
         return {
             "prediction": {
                 "bmi_category": "Unknown",
@@ -320,16 +245,13 @@ def postprocess_results(results, image_shape: tuple) -> Dict[str, Any]:
             },
             "timestamp": datetime.now().isoformat()
         }
-        
     except Exception as e:
         logger.error(f"Result postprocessing error: {e}")
         raise HTTPException(status_code=500, detail="Result processing failed")
 
 def get_health_status(bmi_category: str, confidence: float) -> str:
-    """Get health status based on BMI category"""
     if confidence < 0.5:
         return "Low confidence prediction - consult healthcare provider"
-    
     status_map = {
         "Normal-weight": "Healthy weight range",
         "Overweight": "Above normal weight - consider lifestyle changes",
@@ -337,11 +259,9 @@ def get_health_status(bmi_category: str, confidence: float) -> str:
         "Moderate-obesity": "Moderate obesity - medical consultation advised",
         "Severe-obesity": "Severe obesity - immediate medical attention recommended"
     }
-    
     return status_map.get(bmi_category, "Unknown BMI category")
 
 def get_confidence_level(confidence: float) -> str:
-    """Convert confidence score to descriptive level"""
     if confidence >= 0.9:
         return "Very High"
     elif confidence >= 0.7:
@@ -354,7 +274,6 @@ def get_confidence_level(confidence: float) -> str:
         return "Very Low"
 
 def get_health_recommendations(bmi_category: str) -> List[str]:
-    """Get health recommendations based on BMI category"""
     recommendations_map = {
         "Normal-weight": [
             "Maintain current healthy lifestyle",
@@ -386,14 +305,12 @@ def get_health_recommendations(bmi_category: str) -> List[str]:
             "Regular monitoring of obesity-related health conditions"
         ]
     }
-    
     return recommendations_map.get(bmi_category, [
         "Consult with healthcare professional for personalized advice"
     ])
 
 @app.get("/")
 async def root():
-    """Root endpoint with API information"""
     return {
         "message": "BMI Classification API",
         "version": "1.0.0",
@@ -401,6 +318,8 @@ async def root():
         "endpoints": {
             "health": "/health",
             "predict": "/predict",
+            "analyze": "/analyze",
+            "analyze-simple": "/analyze-simple",
             "model_info": "/model-info"
         },
         "supported_classes": CLASS_NAMES
@@ -408,10 +327,8 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     model_status = "loaded" if model is not None else "not loaded"
     model_type = "custom" if hasattr(model, 'model') else "mock"
-    
     return {
         "status": "healthy",
         "model_status": model_status,
@@ -422,12 +339,9 @@ async def health_check():
 
 @app.get("/model-info")
 async def model_info():
-    """Get information about the loaded model"""
     if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    
     model_type = "custom_trained" if hasattr(model, 'model') else "mock_testing"
-    
     return {
         "model_type": model_type,
         "classes": CLASS_NAMES,
@@ -438,70 +352,26 @@ async def model_info():
 
 @app.post("/predict")
 async def predict_bmi(file: UploadFile = File(...)):
-    """
-    Predict BMI category from uploaded image and return face mesh image with BMI data in headers
-    
-    Args:
-        file: Image file (JPEG, PNG, WEBP)
-    
-    Returns:
-        StreamingResponse with face mesh image and BMI prediction data in headers
-    """
     try:
-        # Check if model is loaded
         if model is None:
             raise HTTPException(status_code=503, detail="Model not available")
-        
-        # Validate file type
         if not file.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="File must be an image")
-        
-        # Read and validate image
-        try:
-            image_bytes = await file.read()
-            image = Image.open(io.BytesIO(image_bytes))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
-        
-        # Validate image
+        image_bytes = await file.read()
+        image = Image.open(io.BytesIO(image_bytes))
         if not validate_image(image):
-            raise HTTPException(
-                status_code=400, 
-                detail="Image validation failed. Please ensure image is in supported format (JPEG/PNG), reasonable size, and good quality."
-            )
-        
-        # Convert to RGB if needed
+            raise HTTPException(status_code=400, detail="Image validation failed")
         if image.mode != 'RGB':
             image = image.convert('RGB')
-        
-        # Convert to numpy array for face mesh
         image_array = np.array(image)
-        
-        # Preprocess image for BMI prediction
         image_np = preprocess_image(image)
-        
-        # Make BMI prediction
-        try:
-            results = model.predict(image_np, verbose=False)
-        except Exception as e:
-            logger.error(f"Model prediction error: {e}")
-            raise HTTPException(status_code=500, detail="Prediction failed")
-        
-        # Process BMI results
+        results = model.predict(image_np, verbose=False)
         bmi_data = postprocess_results(results, image_np.shape)
-        
-        # Create face mesh image
         face_mesh_image, face_detected = create_face_mesh_image(image_array)
-        
-        # Convert face mesh image to PIL and then to bytes
         face_mesh_pil = Image.fromarray(face_mesh_image)
-        
-        # Convert image to byte stream
         buf = io.BytesIO()
         face_mesh_pil.save(buf, format="JPEG")
         buf.seek(0)
-        
-        # Prepare BMI prediction data for headers
         prediction_data = {
             "status": "success",
             "filename": file.filename,
@@ -517,37 +387,99 @@ async def predict_bmi(file: UploadFile = File(...)):
                 "processed_for_bmi": bmi_data["image_info"]["processed_size"]
             }
         }
-        
-        logger.info(f"BMI prediction completed: {bmi_data['prediction']['bmi_category']} "
-                   f"(confidence: {bmi_data['prediction']['confidence']:.3f}), Face detected: {face_detected}")
-        
+        logger.info(f"Prediction: {bmi_data['prediction']['bmi_category']} (confidence {bmi_data['prediction']['confidence']:.3f}), Face detected: {face_detected}")
         return StreamingResponse(
-            buf, 
+            buf,
             media_type="image/jpeg",
             headers={
                 "bmi-prediction": str(prediction_data),
                 "Content-Disposition": f"inline; filename=face_mesh_bmi_{file.filename}"
             }
         )
-        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in BMI prediction: {e}")
+        logger.error(f"[predict] Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@app.post("/analyze")
+async def analyze_bmi(file: UploadFile = File(...)):
+    try:
+        if model is None:
+            raise HTTPException(status_code=503, detail="Model not available")
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        image_bytes = await file.read()
+        image = Image.open(io.BytesIO(image_bytes))
+        if not validate_image(image):
+            raise HTTPException(status_code=400, detail="Image validation failed")
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        image_np = preprocess_image(image)
+        results = model.predict(image_np, verbose=False)
+        bmi_data = postprocess_results(results, image_np.shape)
+        return JSONResponse(content=bmi_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[analyze] Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/analyze-simple")
+async def analyze_simple_bmi(file: UploadFile = File(...)):
+    """
+    Upload image, predict BMI, return only class with highest probability,
+    its probability, and the recommendations.
+    """
+    try:
+        if model is None:
+            raise HTTPException(status_code=503, detail="Model not available")
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        image_bytes = await file.read()
+        image = Image.open(io.BytesIO(image_bytes))
+        if not validate_image(image):
+            raise HTTPException(status_code=400, detail="Image validation failed")
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        image_np = preprocess_image(image)
+        results = model.predict(image_np, verbose=False)
+        bmi_data = postprocess_results(results, image_np.shape)
+
+        probabilities = bmi_data.get("probabilities", {})
+        recommendations = bmi_data.get("analysis", {}).get("recommendations", ["Consult with healthcare professional for personalized advice"])
+
+        if not probabilities:
+            raise HTTPException(status_code=500, detail="Probabilities missing from model output")
+
+        highest_class = max(probabilities, key=probabilities.get)
+        highest_prob = probabilities[highest_class]
+
+        return JSONResponse(
+            content={
+                "class_with_highest_probability": highest_class,
+                "probability": highest_prob,
+                "recommendations": recommendations
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[analyze-simple] Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
     print("Starting BMI Classification API server...")
-    print("Available endpoints:")
-    print("  - http://localhost:8000/docs (API documentation)")
-    print("  - http://localhost:8000/health (health check)")
-    print("  - http://localhost:8000/predict (BMI prediction)")
-    
+    print("API endpoints:")
+    print(" - GET /health")
+    print(" - GET /model-info")
+    print(" - POST /predict    (upload image, get annotated image)")
+    print(" - POST /analyze    (upload image, get full prediction JSON)")
+    print(" - POST /analyze-simple (upload image, get simplified JSON)")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8001,
         reload=True,
         log_level="info"
     )
