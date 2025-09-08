@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import RiskChart from '@/components/dashboard/RiskChart'
 import StatsCards from '@/components/dashboard/StatsCards'
-import { Mic, MicOff, Stethoscope, AlertCircle, Plus, TrendingUp, FileText, Calendar, Activity, Sparkles } from 'lucide-react'
+import { Stethoscope, Plus, TrendingUp, FileText, Calendar, Activity, Sparkles, Users } from 'lucide-react'
 import Vapi from '@vapi-ai/web'
 import styles from './dashboard.module.css'
 
@@ -138,16 +138,28 @@ export default function Dashboard() {
               </div>
               <p className="text-gray-400 text-lg ml-14">Monitor your diabetes risk and health insights</p>
             </div>
-            <Button 
-              asChild 
-              size="lg"
-              className={`bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl hover:shadow-blue-500/25 transition-all duration-300 transform hover:scale-105 ${styles.pulseGlow}`}
-            >
-              <Link href="/screening" className="flex items-center gap-2">
-                <Plus size={20} />
-                New Assessment
-              </Link>
-            </Button>
+            <div className="flex gap-3">
+              <Button 
+                asChild 
+                size="lg"
+                className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl hover:shadow-purple-500/25 transition-all duration-300 transform hover:scale-105"
+              >
+                <Link href="/patient-dashboard" className="flex items-center gap-2">
+                  <Users size={20} />
+                  Patient Dashboard
+                </Link>
+              </Button>
+              <Button 
+                asChild 
+                size="lg"
+                className={`bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl hover:shadow-blue-500/25 transition-all duration-300 transform hover:scale-105 ${styles.pulseGlow}`}
+              >
+                <Link href="/screening" className="flex items-center gap-2">
+                  <Plus size={20} />
+                  New Assessment
+                </Link>
+              </Button>
+            </div>
           </div>
         </div>
       </div>
