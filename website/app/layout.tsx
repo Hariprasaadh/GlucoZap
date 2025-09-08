@@ -36,7 +36,7 @@ export default function RootLayout({
         lang="en" 
         className={`${dmSans.variable} ${poppins.variable} antialiased`}
       >
-        <body className="font-sans">{children}</body>
+        <body className="font-sans" suppressHydrationWarning={true}>{children}</body>
       </html>
     </ClerkProvider>
   )
