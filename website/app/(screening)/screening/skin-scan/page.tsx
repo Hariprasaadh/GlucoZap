@@ -215,7 +215,7 @@ export default function SkinScanPage() {
   }
 
   const finishTest = () => {
-    router.push('/screening/screening');
+    router.push('/screening');
   };
 
   const progressValue = (step / 3) * 100
@@ -226,7 +226,7 @@ export default function SkinScanPage() {
       <nav className="border-b border-white/10 sticky top-0 z-50 bg-black/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex items-center justify-between h-16">
-            <Link href="/screening/screening" className="flex items-center space-x-3">
+            <Link href="/screening" className="flex items-center space-x-3">
               <ArrowLeft className="w-5 h-5" />
               <span className="font-semibold">Back to Assessment</span>
             </Link>

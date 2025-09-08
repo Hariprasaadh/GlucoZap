@@ -20,7 +20,7 @@ export default function ScreeningReport() {
               </div>
               <span className="text-xl font-bold">GlucoZap</span>
             </Link>
-            <Link href="/screening/screening">
+            <Link href="/screening">
               <Button variant="ghost" className="text-white/70 hover:text-white hover:bg-white/10">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Screening
