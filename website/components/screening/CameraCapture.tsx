@@ -88,10 +88,18 @@ export default function CameraCapture({ type, onCapture, onCancel, instructions 
       </div>
 
       <div className="flex space-x-4">
-        <Button variant="outline" onClick={switchCamera}>
+        <Button 
+          variant="outline" 
+          onClick={switchCamera}
+          className="bg-white/10 border-2 border-white/30 text-white hover:bg-white/20 hover:border-white/50 backdrop-blur-sm"
+        >
           Switch Camera
         </Button>
-        <Button variant="outline" onClick={onCancel}>
+        <Button 
+          variant="outline" 
+          onClick={onCancel}
+          className="bg-white/10 border-2 border-white/30 text-white hover:bg-white/20 hover:border-white/50 backdrop-blur-sm"
+        >
           Cancel
         </Button>
       </div>

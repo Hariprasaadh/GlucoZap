@@ -1,0 +1,164 @@
+/* Button visibility and contrast fixes */
+
+/* Enhanced default button styles */
+.btn-primary {
+  background: linear-gradient(135deg, #10b981, #06b6d4) !important;
+  color: white !important;
+  border: none !important;
+  font-weight: 600 !important;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25) !important;
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #059669, #0891b2) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35) !important;
+}
+
+/* Enhanced outline button styles */
+.btn-outline {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border: 2px solid rgba(255, 255, 255, 0.3) !important;
+  color: white !important;
+  backdrop-filter: blur(10px) !important;
+}
+
+.btn-outline:hover {
+  background: rgba(255, 255, 255, 0.2) !important;
+  border-color: rgba(255, 255, 255, 0.5) !important;
+  color: white !important;
+}
+
+/* Enhanced secondary button styles */
+.btn-secondary {
+  background: rgba(107, 114, 128, 0.9) !important;
+  color: white !important;
+  border: 1px solid rgba(156, 163, 175, 0.5) !important;
+}
+
+.btn-secondary:hover {
+  background: rgba(75, 85, 99, 0.9) !important;
+  color: white !important;
+}
+
+/* Enhanced ghost button styles */
+.btn-ghost {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  border: 1px solid transparent !important;
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: white !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+/* Light theme overrides */
+@media (prefers-color-scheme: light) {
+  .btn-outline {
+    background: white !important;
+    border: 2px solid #e5e7eb !important;
+    color: #1f2937 !important;
+  }
+  
+  .btn-outline:hover {
+    background: #f9fafb !important;
+    border-color: #d1d5db !important;
+    color: #111827 !important;
+  }
+  
+  .btn-secondary {
+    background: #f3f4f6 !important;
+    color: #1f2937 !important;
+    border: 1px solid #d1d5db !important;
+  }
+  
+  .btn-secondary:hover {
+    background: #e5e7eb !important;
+    color: #111827 !important;
+  }
+  
+  .btn-ghost {
+    color: #374151 !important;
+  }
+  
+  .btn-ghost:hover {
+    background: rgba(0, 0, 0, 0.05) !important;
+    color: #111827 !important;
+    border-color: rgba(0, 0, 0, 0.1) !important;
+  }
+}
+
+/* Force visibility for problematic buttons */
+button[data-slot="button"] {
+  min-height: 36px !important;
+  position: relative !important;
+}
+
+/* Ensure text is always visible */
+button[data-slot="button"]:not(.btn-primary):not(.btn-outline):not(.btn-secondary):not(.btn-ghost) {
+  background: #374151 !important;
+  color: white !important;
+  border: 1px solid #6b7280 !important;
+}
+
+button[data-slot="button"]:not(.btn-primary):not(.btn-outline):not(.btn-secondary):not(.btn-ghost):hover {
+  background: #4b5563 !important;
+  color: white !important;
+}
+
+/* Dark theme specific fixes */
+.dark button[data-slot="button"]:not(.btn-primary):not(.btn-outline):not(.btn-secondary):not(.btn-ghost) {
+  background: #1f2937 !important;
+  color: #f9fafb !important;
+  border: 1px solid #374151 !important;
+}
+
+.dark button[data-slot="button"]:not(.btn-primary):not(.btn-outline):not(.btn-secondary):not(.btn-ghost):hover {
+  background: #374151 !important;
+  color: white !important;
+}
+
+/* Specific fixes for common button variants */
+button[class*="variant-default"] {
+  background: linear-gradient(135deg, #1f2937, #374151) !important;
+  color: white !important;
+  border: 1px solid #4b5563 !important;
+}
+
+button[class*="variant-outline"] {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border: 2px solid rgba(255, 255, 255, 0.3) !important;
+  color: white !important;
+}
+
+button[class*="variant-secondary"] {
+  background: #6b7280 !important;
+  color: white !important;
+}
+
+button[class*="variant-ghost"] {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+button[class*="variant-ghost"]:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: white !important;
+}
+
+/* Emergency visibility override */
+.force-visible {
+  background: #1f2937 !important;
+  color: white !important;
+  border: 1px solid #4b5563 !important;
+  min-height: 40px !important;
+  padding: 8px 16px !important;
+}
+
+.force-visible:hover {
+  background: #374151 !important;
+  color: white !important;
+  border: 1px solid #6b7280 !important;
+}

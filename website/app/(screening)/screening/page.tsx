@@ -119,7 +119,10 @@ export default function ScreeningHub() {
             </Link>
             
             <Link href="/">
-              <Button variant="ghost" className="text-white/70 hover:text-white hover:bg-white/10">
+              <Button 
+                variant="ghost" 
+                className="text-white/70 hover:text-white hover:bg-white/10 backdrop-blur-sm border border-transparent hover:border-white/20"
+              >
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Home
               </Button>

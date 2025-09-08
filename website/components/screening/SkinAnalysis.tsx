@@ -70,12 +70,17 @@ export default function SkinAnalysis({ onComplete, onBack }: SkinAnalysisProps) 
           </div>
 
           <div className="flex justify-between">
-            <Button variant="outline" onClick={onBack}>
+            <Button 
+              variant="outline" 
+              onClick={onBack}
+              className="bg-white/10 border-2 border-white/30 text-white hover:bg-white/20 hover:border-white/50 backdrop-blur-sm"
+            >
               Back
             </Button>
             <Button 
               onClick={() => onComplete({ images: capturedImages })} 
               disabled={!allCaptured}
+              className="bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:from-emerald-700 hover:to-cyan-700 disabled:opacity-50"
             >
               Continue
             </Button>
