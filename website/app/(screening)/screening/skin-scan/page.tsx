@@ -79,9 +79,10 @@ export default function SkinScanPage() {
       
     } catch (err) {
       console.error('Error accessing camera:', err)
-      if (err.name === 'NotAllowedError') {
+      const error = err as Error & { name?: string }
+      if (error.name === 'NotAllowedError') {
         setError('Camera access denied. Please allow camera permissions and try again.')
-      } else if (err.name === 'NotFoundError') {
+      } else if (error.name === 'NotFoundError') {
         setError('No camera found on this device.')
       } else {
         setError('Unable to access camera. Please check permissions or use file upload instead.')

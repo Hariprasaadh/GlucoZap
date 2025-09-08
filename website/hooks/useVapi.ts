@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Vapi } from '@vapi-ai/web'
+import Vapi from '@vapi-ai/web'
 
 interface CallState {
   status: 'inactive' | 'connecting' | 'connected' | 'user-speaking' | 'assistant-speaking' | 'error'
@@ -52,10 +52,7 @@ export const useVapi = () => {
           return
         }
 
-        const vapiInstance = new Vapi({
-          webToken,
-          workflowId
-        })
+        const vapiInstance = new Vapi(webToken)
 
         setVapi(vapiInstance)
       } catch (error) {

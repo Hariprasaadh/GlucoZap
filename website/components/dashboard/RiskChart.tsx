@@ -55,7 +55,7 @@ export default function RiskChart({ data }: RiskChartProps) {
             }}
             labelStyle={{ color: '#F9FAFB', fontWeight: 600 }}
             formatter={(value: any, name: string) => [
-              <span style={{ color: '#60A5FA', fontWeight: 600 }}>{value}/100</span>,
+              <span key={name} style={{ color: '#60A5FA', fontWeight: 600 }}>{value}/100</span>,
               'Risk Score'
             ]}
           />

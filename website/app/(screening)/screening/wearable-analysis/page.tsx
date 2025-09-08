@@ -33,7 +33,7 @@ export default function WearableDataAnalysis() {
   const router = useRouter()
   const [healthData, setHealthData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   // Fetch health data from Supabase
   const fetchHealthData = async () => {
@@ -51,7 +51,8 @@ export default function WearableDataAnalysis() {
 
       setHealthData(data || [])
     } catch (err) {
-      setError(err.message)
+      const error = err as Error
+      setError(error.message || 'An error occurred while fetching health data')
       console.error('Error fetching health data:', err)
     } finally {
       setLoading(false)

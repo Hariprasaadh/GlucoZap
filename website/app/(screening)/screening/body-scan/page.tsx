@@ -152,7 +152,7 @@ export default function FacialAnalysis() {
     if (bmiPredictionHeader) {
       try {
         // Parse header data
-        let jsonString = bmiPredictionHeader
+        const jsonString = bmiPredictionHeader
           .replace(/'/g, '"')
           .replace(/True/g, 'true')
           .replace(/False/g, 'false')
