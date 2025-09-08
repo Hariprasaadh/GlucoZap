@@ -115,7 +115,7 @@ export default function FacialAnalysis() {
     formData.append('file', imageBlob, 'face-image.jpg')
 
     addDebugInfo('Calling /analyze-simple endpoint...')
-    const response = await fetch('http://172.16.45.171:8001/analyze-simple', {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_BODY_SCAN_API_URL}/analyze-simple`, {
       method: 'POST',
       body: formData,
     })
@@ -136,7 +136,7 @@ export default function FacialAnalysis() {
     formData.append('file', imageBlob, 'face-image.jpg')
 
     addDebugInfo('Calling /predict endpoint...')
-    const response = await fetch('http://172.16.45.171:8001/predict', {
+    const response = await fetch(`${process.env.NEXT_PUBLIC_BODY_SCAN_API_URL}/predict`, {
       method: 'POST',
       body: formData,
     })

@@ -478,7 +478,7 @@ if __name__ == "__main__":
     print(" - POST /analyze-simple (upload image, get simplified JSON)")
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="localhost",
         port=8001,
         reload=True,
         log_level="info"

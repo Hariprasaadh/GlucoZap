@@ -25,8 +25,8 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 
-// Configuration - match your FastAPI server
-const API_BASE_URL = 'http://172.16.45.171:8002' // Changed from 8002 to 8002
+// Configuration - use environment variable for API endpoint
+const API_BASE_URL = process.env.NEXT_PUBLIC_METABOLIC_API_URL
 
 export default function DarkCirclesAnalysis() {
   const [capturedImage, setCapturedImage] = useState<string | null>(null)

@@ -137,7 +137,7 @@ export default function DiabetesQuestionnaire() {
       }
 
       // Call diabetes prediction API
-      const response = await fetch('http://172.16.45.171:8002/predict', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_QUESTIONNAIRE_API_URL}/predict`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

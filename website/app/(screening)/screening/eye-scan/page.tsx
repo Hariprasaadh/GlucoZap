@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 
 // API Configuration - Change this to match your FastAPI server
-const RETINOPATHY_API_BASE = 'http://172.16.45.171:8004' // Change this to your backend IP/port
+const RETINOPATHY_API_BASE = process.env.NEXT_PUBLIC_EYE_SCAN_API_URL
 
 interface RetinopathyResult {
   predicted_class: string

@@ -152,7 +152,7 @@ export default function SkinScanPage() {
       formData.append('file', blob, 'skin-image.jpg')
 
       // Call FastAPI backend
-      const response = await fetch('http://172.16.45.171:8000/predict', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_SKIN_SCAN_API_URL}/predict`, {
         method: 'POST',
         body: formData,
       })
