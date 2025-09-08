@@ -46,6 +46,8 @@ export default function AIAssistantPage() {
   const [isMuted, setIsMuted] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [currentTranscript, setCurrentTranscript] = useState('')
+  const [lastFinalTranscript, setLastFinalTranscript] = useState('')
+  const [transcriptTimeout, setTranscriptTimeout] = useState<NodeJS.Timeout | null>(null)
   const [chatInput, setChatInput] = useState('')
   const [showChat, setShowChat] = useState(false)
   const [debugInfo, setDebugInfo] = useState<string[]>([])
@@ -58,15 +60,51 @@ export default function AIAssistantPage() {
     setDebugInfo(prev => [...prev.slice(-4), `${new Date().toLocaleTimeString()}: ${info}`])
   }
 
+  // Create a unique ID generator to avoid duplicate keys
+  const generateUniqueId = () => {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  }
+
   const addMessage = (role: 'user' | 'assistant' | 'system', content: string, isTranscript = false) => {
+    // Prevent duplicate messages with same content within 1 second
+    const now = new Date()
+    const isDuplicate = messages.some(msg => 
+      msg.content === content && 
+      msg.role === role && 
+      (now.getTime() - msg.timestamp.getTime()) < 1000
+    )
+    
+    if (isDuplicate) {
+      console.log('Preventing duplicate message:', content)
+      return
+    }
+    
     const newMessage: Message = {
-      id: Date.now().toString(),
+      id: generateUniqueId(),
       role,
       content,
-      timestamp: new Date(),
+      timestamp: now,
       isTranscript
     }
     setMessages(prev => [...prev, newMessage])
+  }
+
+  const checkBrowserCompatibility = () => {
+    const issues = []
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      issues.push('Browser does not support microphone access')
+    }
+    
+    if (!window.WebSocket) {
+      issues.push('Browser does not support WebSocket connections')
+    }
+    
+    if (!window.AudioContext && !(window as any).webkitAudioContext) {
+      issues.push('Browser does not support Web Audio API')
+    }
+    
+    return issues
   }
 
   const scrollToBottom = () => {
@@ -98,6 +136,10 @@ export default function AIAssistantPage() {
             setupVapi(Vapi, publicKey)
           } catch (importError) {
             addDebugInfo('Dynamic import failed, trying CDN...')
+            console.error('Import error:', importError)
+            setError('Failed to load VAPI SDK. Please check your internet connection.')
+            setCallStatus('error')
+            return
             loadVapiFromCDN(publicKey)
           }
         }
@@ -132,10 +174,13 @@ export default function AIAssistantPage() {
     const setupVapi = (VapiClass: any, publicKey: string) => {
       try {
         addDebugInfo('Setting up Vapi instance...')
+        console.log('🔧 Creating Vapi instance with key:', publicKey.substring(0, 10) + '...')
+        
         const vapiInstance = new VapiClass(publicKey)
+        console.log('✅ Vapi instance created successfully')
         
         vapiInstance.on('call-start', () => {
-          addDebugInfo('✅ Call started')
+          addDebugInfo('✅ Call started successfully')
           setCallStatus('connected')
           setIsCallActive(true)
           setError(null)
@@ -143,14 +188,14 @@ export default function AIAssistantPage() {
         })
 
         vapiInstance.on('call-end', () => {
-          addDebugInfo('Call ended')
+          addDebugInfo('📞 Call ended normally')
           setCallStatus('ended')
           setIsCallActive(false)
           addMessage('system', 'Voice call ended.')
         })
 
         vapiInstance.on('speech-start', () => {
-          addDebugInfo('🎤 User speaking')
+          addDebugInfo('🎤 User speaking detected')
           setCallStatus('user-speaking')
         })
 
@@ -165,10 +210,23 @@ export default function AIAssistantPage() {
           
           if (message.type === 'transcript') {
             if (message.transcriptType === 'partial') {
+              // Clear any existing timeout when we get a new partial transcript
+              if (transcriptTimeout) {
+                clearTimeout(transcriptTimeout)
+                setTranscriptTimeout(null)
+              }
               setCurrentTranscript(message.transcript)
             } else if (message.transcriptType === 'final') {
               addMessage('user', message.transcript, true)
-              setCurrentTranscript('')
+              setLastFinalTranscript(message.transcript)
+              setCurrentTranscript(message.transcript)
+              
+              // Keep the final transcript visible for 3 seconds
+              const timeout = setTimeout(() => {
+                setCurrentTranscript('')
+                setLastFinalTranscript('')
+              }, 3000)
+              setTranscriptTimeout(timeout)
             }
           } else if (message.type === 'function-call') {
             addMessage('system', `Function called: ${message.functionCall.name}`)
@@ -178,10 +236,100 @@ export default function AIAssistantPage() {
         })
 
         vapiInstance.on('error', (error: any) => {
-          const errorMsg = error?.message || error?.toString() || 'Unknown error'
+          // Handle empty error objects
+          let errorMsg = 'Unknown connection error'
+          let errorDetails = 'No specific error details provided'
+          let type, stage, innerError, context, totalDuration, timestamp
+          
+          if (error) {
+            // Extract specific VAPI error properties
+            ({ type, stage, error: innerError, totalDuration, timestamp, context } = error)
+            
+            if (typeof error === 'string') {
+              errorMsg = error
+              errorDetails = error
+            } else if (error.message) {
+              errorMsg = error.message
+              errorDetails = error.message
+            } else if (type || stage || innerError) {
+              // Build detailed error message from VAPI error structure
+              const errorParts = []
+              if (type) errorParts.push(`Type: ${type}`)
+              if (stage) errorParts.push(`Stage: ${stage}`)
+              if (innerError) {
+                if (typeof innerError === 'string') {
+                  errorParts.push(`Error: ${innerError}`)
+                } else if (innerError.message) {
+                  errorParts.push(`Error: ${innerError.message}`)
+                } else {
+                  errorParts.push(`Error: ${JSON.stringify(innerError)}`)
+                }
+              }
+              if (context) errorParts.push(`Context: ${JSON.stringify(context)}`)
+              
+              errorMsg = errorParts.length > 0 ? errorParts.join(' | ') : 'VAPI connection failed'
+              errorDetails = `VAPI Error Details - ${errorParts.join(', ')}`
+              
+              if (error.totalDuration) {
+                errorDetails += ` (Duration: ${error.totalDuration}ms)`
+              }
+            } else if (error.toString && error.toString() !== '[object Object]') {
+              errorMsg = error.toString()
+              errorDetails = error.toString()
+            } else {
+              // Try to extract any meaningful information from the error object
+              const errorKeys = Object.keys(error)
+              if (errorKeys.length > 0) {
+                errorDetails = `Error object contains: ${errorKeys.join(', ')}`
+                errorMsg = `Connection error (${errorKeys.length} properties)`
+                
+                // Try to get more specific info
+                const values = errorKeys.map(key => `${key}: ${JSON.stringify(error[key])}`).join(', ')
+                errorDetails = `VAPI Error - ${values}`
+              } else {
+                errorDetails = 'Empty error object - likely a connection failure'
+                errorMsg = 'Connection failed - please try again'
+              }
+            }
+          }
+          
           addDebugInfo(`❌ Error: ${errorMsg}`)
-          console.error('Vapi error details:', error)
-          setError(errorMsg)
+          
+          // Log detailed error information for debugging
+          console.group('🔴 Vapi Error Details')
+          console.error('Raw error object:', error)
+          console.log('Error type:', typeof error)
+          console.log('Error keys:', error ? Object.keys(error) : 'null/undefined')
+          if (error) {
+            console.log('VAPI type:', error.type)
+            console.log('VAPI stage:', error.stage)
+            console.log('VAPI inner error:', error.error)
+            console.log('VAPI context:', error.context)
+            console.log('VAPI timestamp:', error.timestamp)
+            console.log('VAPI duration:', error.totalDuration)
+          }
+          console.log('Processed message:', errorMsg)
+          console.groupEnd()
+          
+          // Handle specific error types based on VAPI error structure
+          if (stage === 'connecting' || type === 'connection-failed') {
+            setError('Failed to establish voice connection. Please check your internet connection and try again.')
+          } else if (stage === 'microphone' || type === 'microphone-error') {
+            setError('Microphone access failed. Please allow microphone permissions and refresh the page.')
+          } else if (type === 'start-method-error' && errorMsg.includes('Bad Request')) {
+            setError('Voice assistant configuration error. Please try again or contact support if the issue persists.')
+          } else if (errorMsg.includes('Meeting has ended') || errorMsg.includes('WASM_OR_WORKER_NOT_READY')) {
+            setError('Voice connection failed due to Daily.co WebRTC issues. Please refresh the page and try a different browser.')
+          } else if (errorMsg.includes('permission') || errorMsg.includes('Permission')) {
+            setError('Microphone permission required. Please allow microphone access and try again.')
+          } else if (errorMsg.includes('Connection failed') || errorMsg.includes('connection error')) {
+            setError('Connection failed. Please check your internet connection and try again.')
+          } else if (errorDetails.includes('Empty error object')) {
+            setError('Connection failed unexpectedly. This might be a network issue. Please refresh the page and try again.')
+          } else {
+            setError(`Voice assistant error: ${errorMsg}`)
+          }
+          
           setCallStatus('error')
           setIsCallActive(false)
           addMessage('system', `Error: ${errorMsg}`)
@@ -196,19 +344,38 @@ export default function AIAssistantPage() {
         setVapi(vapiInstance)
         addDebugInfo('✅ Vapi setup complete')
         addMessage('system', 'Voice assistant initialized and ready to use.')
+        
+        // Test Vapi instance
+        console.log('🧪 Testing Vapi instance methods...')
+        console.log('Vapi methods available:', Object.getOwnPropertyNames(Object.getPrototypeOf(vapiInstance)))
+        
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to setup Vapi'
         setError(errorMessage)
         addDebugInfo(`Setup error: ${errorMessage}`)
         setCallStatus('error')
+        console.error('🔴 Vapi setup failed:', err)
       }
     }
 
     initVapi()
 
     return () => {
-      if (vapi && isCallActive) {
-        vapi.stop()
+      if (vapi) {
+        try {
+          if (isCallActive) {
+            vapi.stop()
+          }
+          // Clean up any remaining connections
+          addDebugInfo('Cleaning up Vapi instance')
+        } catch (cleanupError) {
+          console.warn('Error during cleanup:', cleanupError)
+        }
+      }
+      
+      // Clear transcript timeout on unmount
+      if (transcriptTimeout) {
+        clearTimeout(transcriptTimeout)
       }
     }
   }, [])
@@ -224,6 +391,25 @@ export default function AIAssistantPage() {
       setCallStatus('connecting')
       setError(null)
       addDebugInfo('Starting call...')
+      
+      // Check browser compatibility
+      const compatibilityIssues = checkBrowserCompatibility()
+      if (compatibilityIssues.length > 0) {
+        setError(`Browser compatibility issues: ${compatibilityIssues.join(', ')}`)
+        setCallStatus('error')
+        return
+      }
+      
+      // Check microphone permissions first
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio: true })
+        addDebugInfo('✅ Microphone permission granted')
+      } catch (permError) {
+        console.error('Microphone permission error:', permError)
+        setError('Microphone permission required. Please allow microphone access and refresh the page.')
+        setCallStatus('error')
+        return
+      }
       
       const assistant = {
         name: "Health Assistant",
@@ -251,20 +437,62 @@ export default function AIAssistantPage() {
       }
 
       await vapi.start(assistant)
-      addDebugInfo('Call start requested')
+      addDebugInfo('✅ Call start request sent successfully')
     } catch (err: unknown) {
-      console.error('Failed to start call:', err)
-      const errorMessage = err instanceof Error ? err.message : 'Failed to start conversation'
-      setError(errorMessage)
-      addDebugInfo(`Start call error: ${errorMessage}`)
+      console.group('🔴 Start Call Error')
+      console.error('Raw error:', err)
+      console.log('Error type:', typeof err)
+      console.log('Error instanceof Error:', err instanceof Error)
+      console.log('Error keys:', err ? Object.keys(err as object) : 'null/undefined')
+      console.groupEnd()
+      
+      let errorMessage = 'Failed to start conversation'
+      let errorDetails = 'Unknown error occurred'
+      
+      if (err instanceof Error) {
+        errorMessage = err.message
+        errorDetails = err.stack || err.message
+      } else if (typeof err === 'string') {
+        errorMessage = err
+        errorDetails = err
+      } else if (err && typeof err === 'object') {
+        const errorObj = err as any
+        errorMessage = errorObj.message || errorObj.error || 'Connection failed'
+        errorDetails = JSON.stringify(err, null, 2)
+      }
+      
+      addDebugInfo(`❌ Start call error: ${errorMessage}`)
+      
+      // Handle specific error types with more detailed guidance
+      if (errorMessage.includes('Meeting has ended') || errorMessage.includes('WASM_OR_WORKER_NOT_READY')) {
+        setError('Voice connection failed due to Daily.co WebRTC issues. Please refresh the page and try a different browser (Chrome/Firefox recommended).')
+      } else if (errorMessage.includes('permission') || errorMessage.includes('Permission')) {
+        setError('Microphone permission denied. Please click the microphone icon in your address bar, allow access, and refresh the page.')
+      } else if (errorMessage.includes('network') || errorMessage.includes('Network') || errorMessage.includes('connect')) {
+        setError('Network connection failed. Please check your internet connection and try again.')
+      } else if (errorMessage.includes('Failed to start conversation')) {
+        setError('Unable to connect to voice assistant. Please check your VAPI configuration and try again.')
+      } else {
+        setError(`Connection failed: ${errorMessage}. Please try refreshing the page.`)
+      }
+      
       setCallStatus('error')
     }
   }
 
   const endCall = () => {
     if (vapi && isCallActive) {
-      vapi.stop()
-      addDebugInfo('Call ended by user')
+      try {
+        vapi.stop()
+        addDebugInfo('Call ended by user')
+        setCallStatus('ended')
+        setIsCallActive(false)
+      } catch (endError) {
+        console.error('Error ending call:', endError)
+        addDebugInfo('Error ending call, forcing cleanup')
+        setCallStatus('ended')
+        setIsCallActive(false)
+      }
     }
   }
 
@@ -301,13 +529,32 @@ export default function AIAssistantPage() {
   }
 
   const resetAssistant = () => {
+    // Stop any active call first
+    if (vapi && isCallActive) {
+      try {
+        vapi.stop()
+      } catch (stopError) {
+        console.warn('Error stopping call during reset:', stopError)
+      }
+    }
+    
     setError(null)
     setCallStatus('idle')
     setIsCallActive(false)
     setMessages([])
     setCurrentTranscript('')
+    setLastFinalTranscript('')
     setDebugInfo([])
+    setIsMuted(false)
+    
+    // Clear any pending transcript timeout
+    if (transcriptTimeout) {
+      clearTimeout(transcriptTimeout)
+      setTranscriptTimeout(null)
+    }
+    
     addMessage('system', 'Assistant reset. Ready to start a new conversation.')
+    addDebugInfo('🔄 Assistant reset by user')
   }
 
   const getStatusColor = () => {
@@ -407,10 +654,23 @@ export default function AIAssistantPage() {
             </div>
             
             {currentTranscript && (
-              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-4">
-                <div className="flex items-center gap-2 text-blue-300 text-sm">
+              <div className={`border rounded-lg p-3 mb-4 ${
+                currentTranscript === lastFinalTranscript 
+                  ? 'bg-green-500/10 border-green-500/20' 
+                  : 'bg-blue-500/10 border-blue-500/20'
+              }`}>
+                <div className={`flex items-center gap-2 text-sm ${
+                  currentTranscript === lastFinalTranscript 
+                    ? 'text-green-300' 
+                    : 'text-blue-300'
+                }`}>
                   <Mic className="w-4 h-4" />
-                  <span>Listening: "{currentTranscript}"</span>
+                  <span>
+                    {currentTranscript === lastFinalTranscript 
+                      ? `You said: "${currentTranscript}"` 
+                      : `Listening: "${currentTranscript}"`
+                    }
+                  </span>
                 </div>
               </div>
             )}
@@ -428,6 +688,50 @@ export default function AIAssistantPage() {
               <div className="flex items-center gap-2 text-red-300">
                 <AlertTriangle className="w-5 h-5" />
                 <span className="font-medium">Error: {error}</span>
+              </div>
+              
+              {/* Troubleshooting Tips */}
+              <div className="mt-3 text-sm text-red-200/80">
+                <strong>Troubleshooting tips:</strong>
+                <ul className="list-disc list-inside mt-1 space-y-1">
+                  {error.includes('Microphone') || error.includes('permission') ? (
+                    <>
+                      <li className="text-yellow-300">🎤 Click the microphone icon in your browser's address bar</li>
+                      <li className="text-yellow-300">🔓 Allow microphone access for this website</li>
+                      <li className="text-yellow-300">🔄 Refresh the page after granting permissions</li>
+                    </>
+                  ) : error.includes('connection') || error.includes('Connection') ? (
+                    <>
+                      <li className="text-blue-300">🌐 Check your internet connection stability</li>
+                      <li className="text-blue-300">🔄 Try refreshing the page</li>
+                      <li className="text-blue-300">📡 Move closer to your WiFi router if using wireless</li>
+                    </>
+                  ) : error.includes('Daily.co') || error.includes('WebRTC') ? (
+                    <>
+                      <li className="text-purple-300">🌐 Use Chrome or Firefox for best WebRTC support</li>
+                      <li className="text-purple-300">🔌 Disable VPN if you're using one</li>
+                      <li className="text-purple-300">🛡️ Temporarily disable browser extensions</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>Ensure microphone permissions are enabled for this website</li>
+                      <li>Try refreshing the page and connecting again</li>
+                      <li>Check your internet connection</li>
+                      <li>Try using a different browser (Chrome or Firefox recommended)</li>
+                      <li>Disable browser extensions that might block audio</li>
+                    </>
+                  )}
+                </ul>
+                
+                {/* Additional debug info button */}
+                <div className="mt-2">
+                  <button 
+                    onClick={() => console.log('Debug info:', debugInfo)}
+                    className="text-xs text-red-300/60 hover:text-red-300 underline"
+                  >
+                    Show debug info in console
+                  </button>
+                </div>
               </div>
             </div>
           </motion.div>
