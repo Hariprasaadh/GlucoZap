@@ -23,7 +23,8 @@ import {
   CheckCircle,
   ArrowRight,
   Play,
-  Star
+  Star,
+  Stethoscope
 } from 'lucide-react'
 
 export default function Home() {
@@ -228,6 +229,101 @@ export default function Home() {
                 <p className="text-white/70">
                   Get personalized risk score with actionable health recommendations
                 </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Technology Showcase Section - Inspired Design */}
+        <div className="py-24 px-6 bg-gradient-to-b from-black/10 via-transparent to-black/10">
+          <div className="max-w-7xl mx-auto">
+            <div className="grid lg:grid-cols-2 gap-16 items-center">
+              {/* Left Side - Technology Features */}
+              <div className="space-y-8">
+                {/* Advanced AI Technology */}
+                <div className="flex items-start space-x-4 group">
+                  <div className="w-16 h-16 flex items-center justify-center bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl shadow-lg shadow-blue-500/25 group-hover:scale-110 transition-all duration-300">
+                    <Brain className="w-8 h-8 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white mb-2">Advanced AI Analysis</h3>
+                    <p className="text-white/70 leading-relaxed">
+                      Machine learning algorithms trained on thousands of clinical cases to detect early diabetes markers
+                    </p>
+                  </div>
+                </div>
+
+                {/* Clinical Decision Support */}
+                <div className="flex items-start space-x-4 group">
+                  <div className="w-16 h-16 flex items-center justify-center bg-gradient-to-r from-emerald-500 to-cyan-500 rounded-2xl shadow-lg shadow-emerald-500/25 group-hover:scale-110 transition-all duration-300">
+                    <Stethoscope className="w-8 h-8 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white mb-2">Clinical Decision Support</h3>
+                    <p className="text-white/70 leading-relaxed">
+                      Evidence-based recommendations backed by medical research and validated by healthcare professionals
+                    </p>
+                  </div>
+                </div>
+
+                {/* Real-time Processing */}
+                <div className="flex items-start space-x-4 group">
+                  <div className="w-16 h-16 flex items-center justify-center bg-gradient-to-r from-purple-500 to-pink-500 rounded-2xl shadow-lg shadow-purple-500/25 group-hover:scale-110 transition-all duration-300">
+                    <Zap className="w-8 h-8 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold text-white mb-2">Real-time Processing</h3>
+                    <p className="text-white/70 leading-relaxed">
+                      Instant risk assessment using cloud-based AI infrastructure for immediate health insights
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Side - Main Content */}
+              <div className="text-left">
+                <h2 className="text-4xl lg:text-5xl font-black text-white mb-6 leading-tight">
+                  Validate your health status
+                  <br />
+                  or risk factors – harnessing
+                  <br />
+                  <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                    AI-powered data analysis
+                  </span>
+                  <br />
+                  to enhance clinical decision
+                  <br />
+                  making and health impact.
+                </h2>
+
+                <div className="grid md:grid-cols-2 gap-8 mt-12">
+                  <div>
+                    <p className="text-white/70 leading-relaxed mb-6">
+                      GlucoZap&apos;s globally unique image analysis database is 
+                      linked to clinical research and medical data repositories, 
+                      enabling rapid development and validation of 
+                      novel algorithms and AI tools for diabetes screening.
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-white/70 leading-relaxed mb-6">
+                      From identification of risk indicators to 
+                      predictive health measures and automated 
+                      diagnostic analysis, GlucoZap provides the 
+                      engine for your health research.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-8">
+                  <Button 
+                    size="lg" 
+                    className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-xl px-8 py-3 text-base font-semibold transition-all duration-300 shadow-lg shadow-blue-500/25 hover:scale-[1.02] transform"
+                  >
+                    Technologies
+                    <ArrowRight className="ml-2 w-5 h-5" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
