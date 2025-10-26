@@ -28,6 +28,7 @@ import {
   User
 } from 'lucide-react'
 import Vapi from '@vapi-ai/web'
+import { generateHealthReportPDF } from '@/lib/pdf-generator'
 
 // Types for test results
 interface TestResult {
@@ -414,6 +415,16 @@ Would you like me to read the next steps you should take to implement these reco
     setCurrentReadingSection(null)
   }, [vapi])
 
+  // Handle PDF download
+  const handleDownloadPDF = useCallback(() => {
+    try {
+      generateHealthReportPDF(reportData);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Failed to generate PDF. Please try again.');
+    }
+  }, [reportData])
+
   const getRiskColor = (level: string) => {
     switch (level) {
       case 'low': return 'text-emerald-400 bg-emerald-900/20 border-emerald-700'
@@ -528,7 +539,11 @@ Would you like me to read the next steps you should take to implement these reco
                 </Button>
               </div>
 
-              <Button variant="outline" className="bg-gray-800/50 border-gray-600/50 text-gray-300 hover:bg-gray-700/50">
+              <Button 
+                onClick={handleDownloadPDF}
+                variant="outline" 
+                className="bg-gray-800/50 border-gray-600/50 text-gray-300 hover:bg-gray-700/50 hover:border-blue-500/50 hover:text-blue-300 transition-all duration-300"
+              >
                 <Download size={20} />
                 Download PDF
               </Button>
